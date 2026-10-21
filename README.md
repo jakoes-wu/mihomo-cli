@@ -1,6 +1,6 @@
 # mihomo-cli
 
-English | [简体中文](README.zh-CN.md)
+**English** | [简体中文](https://github.com/jakoes-wu/mihomo-cli/blob/main/README.zh-CN.md)
 
 [![Release](https://img.shields.io/github/v/release/jakoes-wu/mihomo-cli)](https://github.com/jakoes-wu/mihomo-cli/releases)
 [![CI](https://github.com/jakoes-wu/mihomo-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/jakoes-wu/mihomo-cli/actions/workflows/ci.yml)
@@ -145,6 +145,7 @@ The service unit is `/etc/systemd/system/mihomo-cli.service`.
 - mihomo-cli runs as its own instance and does not touch other mihomo / Clash services. Only one TUN can
   be active on a machine; `tun on` refuses if another one is running.
 - Do not run mihomo-cli with `sudo`; it calls sudo itself for the few steps that need it.
+- To report a vulnerability, see [SECURITY.md](https://github.com/jakoes-wu/mihomo-cli/blob/main/SECURITY.md).
 
 ## FAQ
 
@@ -172,6 +173,18 @@ kept; proxy service, node, mode and CN switch are restored, TUN, port and mirror
 
 **How do I remove it?** `mihomo-cli uninstall` stops and removes the service and restores DNS; add `--purge`
 to delete the data directory as well. Then `pipx uninstall mihomo-cli`.
+
+## Contributing
+
+Issues and pull requests are welcome; please read
+[CONTRIBUTING.md](https://github.com/jakoes-wu/mihomo-cli/blob/main/CONTRIBUTING.md) first.
+Run the checks with:
+
+```bash
+pip install -e '.[test]' ruff
+ruff check src tests
+pytest -q
+```
 
 ## License
 

@@ -1,6 +1,6 @@
 # mihomo-cli
 
-[English](README.md) | 简体中文
+[English](README.md) | **简体中文**
 
 [![Release](https://img.shields.io/github/v/release/jakoes-wu/mihomo-cli)](https://github.com/jakoes-wu/mihomo-cli/releases)
 [![CI](https://github.com/jakoes-wu/mihomo-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/jakoes-wu/mihomo-cli/actions/workflows/ci.yml)
@@ -139,6 +139,7 @@ eval "$(mihomo-cli proxy-env on)"   # 当前终端走代理（127.0.0.1:7897）
 - mihomo-cli 是独立实例，不改动机器上其它 mihomo / Clash 服务。同一台机器只能开一个 TUN，
   已有其它 TUN 时 `tun on` 会拒绝。
 - 不要用 `sudo` 运行 mihomo-cli；需要权限的几步它会自己调用 sudo。
+- 报告安全漏洞请看 [SECURITY.md](SECURITY.md)。
 
 ## 常见问题
 
@@ -163,6 +164,16 @@ eval "$(mihomo-cli proxy-env on)"   # 当前终端走代理（127.0.0.1:7897）
 **怎么卸载？** `mihomo-cli uninstall` 停止并删除后台服务，同时恢复 DNS；加 `--purge` 会连数据目录一起删除。
 最后 `pipx uninstall mihomo-cli`。
 
+## 参与贡献
+
+欢迎提 issue 和 pull request，请先读 [CONTRIBUTING.md](CONTRIBUTING.md)。本地检查：
+
+```bash
+pip install -e '.[test]' ruff
+ruff check src tests
+pytest -q
+```
+
 ## 许可证
 
-MIT
+[MIT](https://github.com/jakoes-wu/mihomo-cli/blob/main/LICENSE)

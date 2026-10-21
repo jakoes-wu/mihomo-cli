@@ -5,6 +5,8 @@
 - README: badges, a three-line usage example and a terminal demo animation; `scripts/make-assets.py`
   regenerates the demo GIF and the social preview image from a real session against a fake core.
 - README: How it works, Prerequisites, Supported platforms and FAQ sections, plus a platform badge.
+- CONTRIBUTING.md and SECURITY.md; links in `README.md` are full URLs so they work on the PyPI
+  project page, and CI checks this.
 
 ## 0.1.1 - 2026-10-21
 
