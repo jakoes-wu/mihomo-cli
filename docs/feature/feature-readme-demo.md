@@ -20,7 +20,7 @@ mihomo-cli 现状：`README.md:1-16` 只有标题、语言切换、简介和特�
 
 目标：
 
-1. 两份 README 首页加徽章、三行用法示例、演示 GIF 与“演示节点为示例”说明。
+1. 两份 README 首页加徽章（含支持的操作系统）、三行用法示例、演示 GIF 与“演示节点为示例”说明。
 2. 新增 `scripts/make-assets.py`，离线、可重复地生成 `docs/assets/demo.gif` 与 `docs/assets/social-preview.png`，画面全部来自 mihomo-cli 真实输出。
 
 非目标：
@@ -60,8 +60,11 @@ mihomo-cli 现状：`README.md:1-16` 只有标题、语言切换、简介和特�
 [![CI](https://github.com/jakoes-wu/mihomo-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/jakoes-wu/mihomo-cli/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/mihomo-cli)](https://pypi.org/project/mihomo-cli/)
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://github.com/jakoes-wu/mihomo-cli/blob/main/LICENSE)
+![Platform](https://img.shields.io/badge/platform-Linux-lightgrey)
 ```
+
+2026-10-21 补充：按用户要求参照 ownexit 加“支持的操作系统”徽章（只支持 Linux）；英文版 LICENSE 链接改为绝对地址，PyPI 页面上相对链接会失效。中文版不进 PyPI，保留相对链接。
 
 **三行示例 + 动画**（插入简介段之后、特性列表之前）：
 

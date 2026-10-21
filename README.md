@@ -6,7 +6,8 @@ English | [简体中文](README.zh-CN.md)
 [![CI](https://github.com/jakoes-wu/mihomo-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/jakoes-wu/mihomo-cli/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/mihomo-cli)](https://pypi.org/project/mihomo-cli/)
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://github.com/jakoes-wu/mihomo-cli/blob/main/LICENSE)
+![Platform](https://img.shields.io/badge/platform-Linux-lightgrey)
 
 A command-line, Clash-style proxy client for Linux machines without a desktop, powered by the
 [mihomo](https://github.com/MetaCubeX/mihomo) core. Use it through an interactive menu or plain commands.

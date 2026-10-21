@@ -7,6 +7,7 @@
 [![PyPI](https://img.shields.io/pypi/v/mihomo-cli)](https://pypi.org/project/mihomo-cli/)
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-Linux-lightgrey)
 
 给没有桌面环境的 Linux 机器用的命令行版简易 Clash，以 [mihomo](https://github.com/MetaCubeX/mihomo) 为内核。
 既可以用交互菜单，也可以直接敲命令。
