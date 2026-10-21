@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.0 - 2026-10-21
 
 - First release: Linux (Ubuntu 20.04 / 22.04 / 24.04) command-line client built on the mihomo core.
 - Interactive menu and direct commands; proxy services (subscription / local file / manual nodes),
