@@ -1,0 +1,68 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mihomo-cli"
+dynamic = ["version"]
+description = "A command-line Clash-style client for Linux servers, powered by the mihomo kernel"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.8"
+authors = [{ name = "jakoes-wu" }]
+keywords = ["mihomo", "clash", "proxy", "cli", "tun"]
+classifiers = [
+    "Environment :: Console",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: Proxy Servers",
+]
+# 只写下限：pip 按各版本的 requires_python 自动挑出 Python 3.8 还能装的最后版本（方案 §3）。
+dependencies = [
+    "click>=8.0",
+    "rich>=12.0",
+    "questionary>=1.10",
+    "httpx>=0.24",
+    "PyYAML>=5.4",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.scripts]
+mihomo-cli = "mihomo_cli.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/jakoes-wu/mihomo-cli"
+Issues = "https://github.com/jakoes-wu/mihomo-cli/issues"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.version.raw-options]
+# 仓库还没有任何标签时（本地开发 / 首次构建）给一个可识别的占位版本。
+fallback_version = "0.0.0"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mihomo_cli"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/", "tests/", "README.md", "README.zh-CN.md", "LICENSE", "CHANGELOG.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py38"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "UP"]
+ignore = ["UP006", "UP007", "UP035", "UP031", "UP037", "UP045", "E501"]

@@ -1,0 +1,116 @@
+# 推送 vX.Y.Z 标签触发：测试 → 构建 → 发 TestPyPI → 三个 Ubuntu 版本冒烟 → 发 PyPI（需人工批准）→ GitHub Release。
+# 发布用 PyPI Trusted Publisher（OIDC），仓库里不存任何令牌；首次发布前需在 PyPI / TestPyPI 登记 pending publisher。
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    needs: test
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build twine
+      - run: python -m build
+      - run: twine check dist/*
+      - id: ver
+        # 标签与构建出的版本号必须一致，否则说明标签打错或工作区不干净
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          ls dist/ | grep -q "mihomo_cli-${version}-py3-none-any.whl" || { ls dist/; echo "version mismatch"; exit 1; }
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish-testpypi:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment: testpypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  smoke:
+    needs: [build, publish-testpypi]
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["ubuntu:20.04", "ubuntu:22.04", "ubuntu:24.04"]
+    container: ${{ matrix.image }}
+    steps:
+      - run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq && apt-get install -y -qq python3 python3-venv ca-certificates >/dev/null
+          python3 -m venv /opt/v
+          # 刚发布到 TestPyPI 的版本索引可能有几分钟延迟，下面安装本包时重试等待
+          # 依赖只从正式 PyPI 装（防止 TestPyPI 上有人抢注同名依赖包），本包再用 --no-deps 从 TestPyPI 装
+          # 下面的依赖清单必须与 pyproject.toml 的 [project] dependencies 保持一致，改依赖时两处同改
+          /opt/v/bin/pip install -q "click>=8.0" "rich>=12.0" "questionary>=1.10" "httpx>=0.24" "PyYAML>=5.4"
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            /opt/v/bin/pip install -q --no-deps --index-url https://test.pypi.org/simple/ \
+              "mihomo-cli==${{ needs.build.outputs.version }}" && break
+            sleep 30
+          done
+          /opt/v/bin/mihomo-cli --version | grep -F "${{ needs.build.outputs.version }}"
+          /opt/v/bin/mihomo-cli --lang en --help > /dev/null
+          /opt/v/bin/mihomo-cli --lang zh help node add > /dev/null
+
+  publish-pypi:
+    needs: smoke
+    runs-on: ubuntu-24.04
+    environment: pypi  # 在仓库设置里给该环境配置“需人工批准”
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    needs: [build, publish-pypi]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: 取 CHANGELOG 对应版本段作为正文
+        run: |
+          awk -v v="${{ needs.build.outputs.version }}" '
+            $0 ~ "^## \\[?"v"\\]?" {on=1; next}
+            on && /^## / {exit}
+            on {print}' CHANGELOG.md > notes.md
+          test -s notes.md || echo "Release ${GITHUB_REF_NAME}" > notes.md
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --notes-file notes.md
