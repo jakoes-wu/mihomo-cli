@@ -2,8 +2,24 @@
 
 English | [简体中文](README.zh-CN.md)
 
+[![Release](https://img.shields.io/github/v/release/jakoes-wu/mihomo-cli)](https://github.com/jakoes-wu/mihomo-cli/releases)
+[![CI](https://github.com/jakoes-wu/mihomo-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/jakoes-wu/mihomo-cli/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/mihomo-cli)](https://pypi.org/project/mihomo-cli/)
+![Python](https://img.shields.io/badge/python-3.8%2B-blue)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 A command-line, Clash-style proxy client for Linux machines without a desktop, powered by the
 [mihomo](https://github.com/MetaCubeX/mihomo) core. Use it through an interactive menu or plain commands.
+
+```sh
+mihomo-cli profile add airport --url '<subscription>'   # add your proxy service
+mihomo-cli node auto                                    # pick the fastest node
+mihomo-cli                                              # interactive menu
+```
+
+![mihomo-cli demo](https://raw.githubusercontent.com/jakoes-wu/mihomo-cli/main/docs/assets/demo.gif)
+
+<sub>The nodes in the demo are examples.</sub>
 
 - Proxy services: an airport subscription, a local Clash/mihomo file, or hand-added node links (e.g. your own VPS)
 - Switch nodes without restarting; latency test and automatic fastest-node pick

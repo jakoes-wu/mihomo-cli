@@ -2,8 +2,24 @@
 
 [English](README.md) | 简体中文
 
+[![Release](https://img.shields.io/github/v/release/jakoes-wu/mihomo-cli)](https://github.com/jakoes-wu/mihomo-cli/releases)
+[![CI](https://github.com/jakoes-wu/mihomo-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/jakoes-wu/mihomo-cli/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/mihomo-cli)](https://pypi.org/project/mihomo-cli/)
+![Python](https://img.shields.io/badge/python-3.8%2B-blue)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 给没有桌面环境的 Linux 机器用的命令行版简易 Clash，以 [mihomo](https://github.com/MetaCubeX/mihomo) 为内核。
 既可以用交互菜单，也可以直接敲命令。
+
+```sh
+mihomo-cli profile add airport --url '<订阅地址>'   # 添加代理服务
+mihomo-cli node auto                                # 自动选最快的节点
+mihomo-cli                                          # 打开交互菜单
+```
+
+![mihomo-cli 演示](https://raw.githubusercontent.com/jakoes-wu/mihomo-cli/main/docs/assets/demo.gif)
+
+<sub>演示中的节点为示例。</sub>
 
 - 代理服务：机场订阅、本地 Clash / mihomo 配置文件，或手工添加的节点链接（比如自建 VPS）
 - 切换节点不重启、不断网；测延迟，一键选最快节点
