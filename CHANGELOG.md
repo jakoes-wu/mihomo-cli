@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.2 - 2026-10-21
 
 - Fix the interactive menu crashing on Python 3.8 (Ubuntu 20.04) with `AttributeError: 'VSplit' object has no
   attribute 'content'`: questionary 2.1.0, the last release for Python 3.8, does not work with prompt_toolkit
