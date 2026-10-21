@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Fix the interactive menu crashing on Python 3.8 (Ubuntu 20.04) with `AttributeError: 'VSplit' object has no
+  attribute 'content'`: questionary 2.1.0, the last release for Python 3.8, does not work with prompt_toolkit
+  3.0.52 or later, so prompt_toolkit is now kept below 3.0.52 on Python 3.8. Reinstall or upgrade to pick it up.
 - README: badges, a three-line usage example and a terminal demo animation; `scripts/make-assets.py`
   regenerates the demo GIF and the social preview image from a real session against a fake core.
 - README: How it works, Prerequisites, Supported platforms and FAQ sections, plus a platform badge.
