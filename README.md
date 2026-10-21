@@ -30,16 +30,48 @@ mihomo-cli                                              # interactive menu
 - Every change is validated, backed up, and rolled back automatically if it fails
 - `doctor` self-check with fixes, `--json` output, English / Chinese interface, shell completion
 
-Supported: Linux (tested on Ubuntu 20.04 / 22.04 / 24.04), Python 3.8+. macOS and Windows are not supported yet.
+Supported: Linux with systemd (amd64 / arm64), Python 3.8+; macOS and Windows are not supported yet. Details in
+[Supported platforms](#supported-platforms).
+
+## How it works
+
+```text
+programs using the proxy ──HTTP / SOCKS──▶ 127.0.0.1:7897 ───┐
+                                                             ├─▶ mihomo core ──▶ your node ──▶ websites
+whole machine, optional ──TUN (mihomocli0)───────────────────┘   (systemd service, runs as you)
+```
+
+You tell mihomo-cli what you want — which proxy service, which node, which mode. It generates a new
+`config.yaml` for the core, checks it with `mihomo -t`, backs up the current files and hot-reloads the core
+through its local API socket. Your settings are written to `state.yaml` only after the core confirms the
+change took effect; if the reload or that check fails, the previous files are put back.
+Switching nodes or modes goes through the same API, without restarting the core.
+
+The core runs as a systemd service under your own user, with only the network capabilities it needs
+(`CAP_NET_ADMIN`, `CAP_NET_BIND_SERVICE`, `CAP_NET_RAW`), so everyday commands need no root. In rule mode,
+private addresses go direct, domestic (CN) sites follow the `cn` switch, and everything else uses the proxy.
+
+With `tun on`, the core creates the `mihomocli0` interface and system DNS (systemd-resolved) is pointed at the
+core on 127.0.0.1, so programs that ignore proxy settings are covered too. `tun off`, stopping the service or
+`uninstall` puts DNS back the way it was.
+
+## Prerequisites
+
+- Linux with systemd, on amd64 or arm64, and an account that can use `sudo` (needed only for a few
+  steps: `install`, `uninstall`, `service start/stop/restart`, `tun on/off` and `doctor --fix`).
+- Python 3.8+ with `pipx`. If `pipx` is not installed yet, install it first, then open a new terminal so
+  `~/.local/bin` is on `PATH`:
+
+  ```bash
+  sudo apt update && sudo apt install -y pipx python3-venv
+  pipx ensurepath
+  ```
+
+- Access to GitHub while installing (the core and geo data are downloaded from there), or a mirror, see below.
+- A proxy service: an airport subscription URL, a Clash / mihomo YAML file, or node links such as `vless://`.
+- For TUN mode only: `/dev/net/tun` and DNS managed by systemd-resolved (`resolvectl`).
 
 ## Install
-
-If `pipx` is not installed yet, install it first, then open a new terminal so `~/.local/bin` is on `PATH`:
-
-```bash
-sudo apt update && sudo apt install -y pipx python3-venv
-pipx ensurepath
-```
 
 ```bash
 pipx install mihomo-cli
@@ -96,6 +128,16 @@ Everything lives in `~/.local/share/mihomo-cli` (mode 0700): `state.yaml` (what 
 source of truth), the generated `config.yaml`, the core in `bin/`, `backups/`, and `mihomo-cli.log`.
 The service unit is `/etc/systemd/system/mihomo-cli.service`.
 
+## Supported platforms
+
+| | |
+| ---- | ---- |
+| Operating system | Linux with systemd. Tested with the service, TUN and DNS takeover on an Ubuntu 20.04 machine; each release is checked to pip-install and start (`--version` / `--help`) on Ubuntu 20.04 / 22.04 / 24.04. Other systemd distributions should work but are untested |
+| CPU | amd64 (the core's `compatible` build, so older CPUs without AVX work too); arm64 (untested) |
+| Python | 3.8 – 3.13 |
+| macOS / Windows | Not supported yet; most commands exit with code 6 |
+| Other proxies | Can run next to other mihomo / Clash instances on a different port; only one TUN per machine |
+
 ## Notes
 
 - The mihomo core (GPL-3.0) is not bundled; it is downloaded from the official releases and checked
@@ -104,6 +146,33 @@ The service unit is `/etc/systemd/system/mihomo-cli.service`.
   be active on a machine; `tun on` refuses if another one is running.
 - Do not run mihomo-cli with `sudo`; it calls sudo itself for the few steps that need it.
 
+## FAQ
+
+**Something isn't working. Where do I start?** Run `mihomo-cli doctor`. It runs 15 checks — core, service,
+config, port, nodes, exit IP, other proxy instances, TUN and DNS takeover, and more — and prints a fix hint
+for most problems. `mihomo-cli doctor --fix` applies the fixes it can do by itself.
+
+**A program ignores the proxy.** Proxy the current shell with `eval "$(mihomo-cli proxy-env on)"`, or run
+`mihomo-cli completion bash --install` (or `zsh`), open a new terminal and use `mproxy on`.
+Programs that ignore proxy variables need `mihomo-cli tun on`.
+
+**I already run Clash or mihomo.** mihomo-cli is a separate instance with its own data directory and service.
+If port 7897 is taken, choose another with `mihomo-cli install --port N`. Only one TUN can run at a time;
+`tun on` refuses while another one is active.
+
+**GitHub is slow or blocked.** Pass `--mirror <URL>` to `install` or `core upgrade` (see Install);
+the mirror is remembered.
+
+**A change broke something.** Every change is checked and rolled back automatically if it fails. To go back
+to earlier settings, use `mihomo-cli backup list` and `mihomo-cli backup restore <name>` (the latest 10 are
+kept; proxy service, node, mode and CN switch are restored, TUN, port and mirror stay as they are).
+
+**Should domestic sites go direct?** In rule mode, `mihomo-cli cn direct` (the default) or `cn proxy`.
+`mode global` sends everything through the proxy; `mode direct` sends nothing.
+
+**How do I remove it?** `mihomo-cli uninstall` stops and removes the service and restores DNS; add `--purge`
+to delete the data directory as well. Then `pipx uninstall mihomo-cli`.
+
 ## License
 
-MIT
+[MIT](https://github.com/jakoes-wu/mihomo-cli/blob/main/LICENSE)
