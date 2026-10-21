@@ -713,6 +713,10 @@ def install(ctx: Ctx, core_version: Optional[str], mirror: Optional[str], port: 
         write_config(ctx, state)
     # 调 systemctl enable --now 之前必须已释放锁（ExecStartPre 要拿它）。
     ctx.say("info", t("info.sudo_install"))
+    # 先单独让 sudo 读密码（sudo -v 不设超时）。否则密码会在 install_service 的第一条 sudo 命令里读，
+    # 输密码的时间算进那条命令 15 秒的超时，输慢了就失败。
+    if not ctx.platform.sudo_validate():
+        raise CliError(EXIT_SUDO, t("err.sudo_failed"))
     user = getpass.getuser()
     try:
         ctx.platform.install_service(home, user, ctx.python_exe)
@@ -742,6 +746,9 @@ def _install_core(ctx: Ctx, base: str, version: str) -> Optional[str]:
 
 def uninstall(ctx: Ctx, purge: bool) -> Dict[str, Any]:
     ctx.say("info", t("info.sudo_uninstall"))
+    # 同 install：unit 文件不存在时第一条 sudo 是 15 秒超时的 daemon-reload，先单独读密码。
+    if not ctx.platform.sudo_validate():
+        raise CliError(EXIT_SUDO, t("err.sudo_failed"))
     try:
         # 停止时 ExecStopPost 会还原 DNS 接管。
         ctx.platform.uninstall_service()

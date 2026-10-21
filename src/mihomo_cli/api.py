@@ -136,10 +136,18 @@ class Api:
         self._request("POST", "/configs/geo", timeout=TIMEOUT_PROVIDER_UPDATE_SEC, body={})
 
     def proxy_delay(self, name: str, url: str = DELAY_URL, timeout_ms: int = DELAY_TIMEOUT_MS) -> int:
+        """单节点测速。节点都在 provider（main / manual）里，不能用 /proxies/<名>/delay：
+        那个路由只查顶层节点表（hub/route/proxies.go:46-55），对 provider 节点一律 404。
+        provider 节点路由与它共用 getProxyDelay（hub/route/provider.go:30-36），参数与 404/503/504 语义相同。
+        两个 provider 都找不到时抛 404，调用方据此判“没有该节点”。先查 main：手工节点名带 "[M] " 前缀，
+        只有订阅节点本身以它开头才会重名。"""
         timeout_ms = min(int(timeout_ms), DELAY_TIMEOUT_MAX_MS)
-        data = self._request("GET", "/proxies/%s/delay" % _q(name), timeout=timeout_ms / 1000.0 + 5,
-                             params={"url": url, "timeout": timeout_ms})
-        return int(data.get("delay", 0))
+        for provider in ("main", "manual"):
+            if name in self.provider_node_names(provider):
+                data = self._request("GET", "/providers/proxies/%s/%s/healthcheck" % (_q(provider), _q(name)),
+                                     timeout=timeout_ms / 1000.0 + 5, params={"url": url, "timeout": timeout_ms})
+                return int(data.get("delay", 0))
+        raise ApiError("GET", "/providers/proxies/*/" + _q(name), 404, "Resource not found")
 
     def group_delay(self, group: str, url: str = DELAY_URL, timeout_ms: int = DELAY_TIMEOUT_MS) -> Dict[str, int]:
         timeout_ms = min(int(timeout_ms), DELAY_TIMEOUT_MAX_MS)

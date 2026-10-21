@@ -205,6 +205,8 @@ class FakePlatform(Platform):
         return 0
 
     def sudo_validate(self) -> bool:
+        # 记进 actions，供测试断言先预检 sudo、再动服务的顺序
+        self.actions.append("sudo_validate")
         return self.sudo_ok
 
     def run_self_as_root(self, home: str, python_exe: str, subcommand: str, preserve_env: List[str]) -> int:

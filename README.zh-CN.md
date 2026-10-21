@@ -17,6 +17,13 @@
 
 ## 安装
 
+没有 pipx 时先装上，然后新开一个终端，让 `~/.local/bin` 进入 `PATH`：
+
+```bash
+sudo apt update && sudo apt install -y pipx python3-venv
+pipx ensurepath
+```
+
 ```bash
 pipx install mihomo-cli
 mihomo-cli install            # 下载 mihomo 内核与地区数据库，安装后台服务（输一次 sudo 密码）
