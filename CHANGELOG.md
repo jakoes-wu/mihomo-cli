@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- README: badges, a three-line usage example and a terminal demo animation; `scripts/make-assets.py`
+  regenerates the demo GIF and the social preview image from a real session against a fake core.
+
 ## 0.1.1 - 2026-10-21
 
 - Fix `node test <name>` reporting "no such node" and `doctor` D09 failing: single-node latency now uses the
