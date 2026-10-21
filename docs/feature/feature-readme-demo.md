@@ -20,7 +20,7 @@ mihomo-cli 现状：`README.md:1-16` 只有标题、语言切换、简介和特�
 
 目标：
 
-1. 两份 README 首页加徽章、三行用法示例、演示 GIF 与“演示节点为示例”说明。
+1. 两份 README 首页加徽章（含支持的操作系统）、三行用法示例、演示 GIF 与“演示节点为示例”说明。
 2. 新增 `scripts/make-assets.py`，离线、可重复地生成 `docs/assets/demo.gif` 与 `docs/assets/social-preview.png`，画面全部来自 mihomo-cli 真实输出。
 
 非目标：
@@ -60,8 +60,13 @@ mihomo-cli 现状：`README.md:1-16` 只有标题、语言切换、简介和特�
 [![CI](https://github.com/jakoes-wu/mihomo-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/jakoes-wu/mihomo-cli/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/mihomo-cli)](https://pypi.org/project/mihomo-cli/)
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://github.com/jakoes-wu/mihomo-cli/blob/main/LICENSE)
+![Platform](https://img.shields.io/badge/platform-Linux-lightgrey)
 ```
+
+2026-10-21 补充：按用户要求参照 ownexit 加“支持的操作系统”徽章（只支持 Linux）；英文版 LICENSE 链接改为绝对地址，PyPI 页面上相对链接会失效。中文版不进 PyPI，保留相对链接。
+
+2026-10-21 再补充：用户要求参照 ownexit 的 README 再加 How it works、Prerequisites、Supported platforms、FAQ 四节（中文版对应“工作原理 / 准备工作 / 支持的平台 / 常见问题”）。Install 段原有的 pipx 前置代码块移入 Prerequisites；英文版末尾许可证改为绝对链接。各节事实出处：服务单元 `src/mihomo_cli/platform/linux.py:74-101`（User=、AmbientCapabilities、ExecStopPost 还原 DNS），内核架构 `platform/linux.py:62-71`，DNS 接管 `platform/linux.py:273-306`，TUN 前提 `platform/linux.py:256-259`，分流规则 `render.py:155-161`，fake-ip 与网卡名 `render.py:19`、`:168-177`，重载事务 `actions.py:420-430`，国内开关默认值 `state.py:81`，自检 15 项 `i18n.py:247-261`，macOS 占位 `platform/darwin.py`，测试覆盖 `.github/workflows/ci.yml`（Python 3.8–3.13）与 `release.yml:57-82`（三版 Ubuntu 容器内 pip 安装后跑 `--version` / `--help`）；“Ubuntu 20.04 上测试过后台服务、TUN 和 DNS 接管”依据 2026-10-21 编译机（Ubuntu 20.04.6 x86_64）上 0.1.1 的实际部署（服务 active、`tun on`、doctor D10/D12/D13 为 OK）。sudo 适用范围另见 `platform/linux.py:128-131`（service start/stop/restart）、`doctor.py:131`、`:324`（`--fix`）；备份恢复保留 TUN、端口与镜像见 `actions.py:1474`。
 
 **三行示例 + 动画**（插入简介段之后、特性列表之前）：
 
