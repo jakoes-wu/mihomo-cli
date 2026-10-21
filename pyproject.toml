@@ -24,11 +24,17 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Topic :: Internet :: Proxy Servers",
 ]
-# 只写下限：pip 按各版本的 requires_python 自动挑出 Python 3.8 还能装的最后版本（方案 §3）。
+# 一般只写下限：pip 按各版本的 requires_python 自动挑出 Python 3.8 还能装的最后版本（方案 §3）。
+# 例外是 3.8 上的 prompt_toolkit 必须有上限，见 docs/bugfix/fix-menu-py38.md。
 dependencies = [
     "click>=8.0",
     "rich>=12.0",
     "questionary>=1.10",
+    # Python 3.8 只能装到 questionary 2.1.0（2.1.1 要求 3.9+），它写死了 prompt_toolkit 的界面结构，
+    # 遇到 3.0.52 起的新结构，菜单一打开就崩；去掉这条上限会让 Ubuntu 20.04 上的菜单打不开。
+    "prompt_toolkit<3.0.52; python_version < '3.9'",
+    # 3.9 起要求已修复的 questionary，防止旧环境里留着 2.1.0、prompt_toolkit 却被升级的组合
+    "questionary>=2.1.1; python_version >= '3.9'",
     "httpx>=0.24",
     "PyYAML>=5.4",
 ]

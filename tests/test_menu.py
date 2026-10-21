@@ -1,4 +1,7 @@
-"""R-17：菜单与命令行调同一套动作，结果一致。questionary 用脚本化的假对象替换。"""
+"""R-17：菜单与命令行调同一套动作，结果一致。questionary 用脚本化的假对象替换。
+
+另有一条不打补丁的真实选择框测试，用来发现 questionary 与 prompt_toolkit 版本不兼容。
+"""
 
 import questionary
 
@@ -70,3 +73,19 @@ def test_menu_add_nodes_profile(env, monkeypatch):
     st = load_state(ctx.paths)
     assert [m["link"] for m in st["profiles"]["vps"]["manual"]] == ["ss://a@1.1.1.1:1#a", "ss://b@2.2.2.2:2#b"]
     assert st["active_profile"] == "air"
+
+
+def test_real_select_renders():
+    """真实画一次选择框（fix-menu-py38）。
+
+    上面的测试都把 questionary 换成了假对象，抓不到“选择框一打开就崩”这类依赖版本问题。
+    回车后再送 Ctrl-C：万一回车没被选择框接收，ask() 会因 Ctrl-C 返回 None 让断言失败，
+    而不是一直等输入把 CI 卡到超时。
+    """
+    from prompt_toolkit.input import create_pipe_input
+    from prompt_toolkit.output import DummyOutput
+
+    with create_pipe_input() as pipe:
+        pipe.send_text("\r\x03")
+        picked = questionary.select("t", choices=["a", "b"], input=pipe, output=DummyOutput()).ask()
+    assert picked == "a"

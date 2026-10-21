@@ -70,7 +70,8 @@ jobs:
           # 刚发布到 TestPyPI 的版本索引可能有几分钟延迟，下面安装本包时重试等待
           # 依赖只从正式 PyPI 装（防止 TestPyPI 上有人抢注同名依赖包），本包再用 --no-deps 从 TestPyPI 装
           # 下面的依赖清单必须与 pyproject.toml 的 [project] dependencies 保持一致，改依赖时两处同改
-          /opt/v/bin/pip install -q "click>=8.0" "rich>=12.0" "questionary>=1.10" "httpx>=0.24" "PyYAML>=5.4"
+          /opt/v/bin/pip install -q "click>=8.0" "rich>=12.0" "questionary>=1.10" "httpx>=0.24" "PyYAML>=5.4" \
+            "prompt_toolkit<3.0.52; python_version < '3.9'" "questionary>=2.1.1; python_version >= '3.9'"
           for i in 1 2 3 4 5 6 7 8 9 10; do
             /opt/v/bin/pip install -q --no-deps --index-url https://test.pypi.org/simple/ \
               "mihomo-cli==${{ needs.build.outputs.version }}" && break
@@ -79,6 +80,19 @@ jobs:
           /opt/v/bin/mihomo-cli --version | grep -F "${{ needs.build.outputs.version }}"
           /opt/v/bin/mihomo-cli --lang en --help > /dev/null
           /opt/v/bin/mihomo-cli --lang zh help node add > /dev/null
+          # 本包是 --no-deps 装的，上面的手抄依赖清单验不到发布包自带的依赖；这里核发布包里确实带着按 Python 版本区分的两条约束
+          /opt/v/bin/python -I -c 'from importlib.metadata import requires; print("\n".join(requires("mihomo-cli")))' > /tmp/req.txt
+          # 连同 Python 版本条件一起核（不含引号，打包工具可能改引号风格）；分两行写：bash -e 下 a && b 里 a 失败不会让步骤失败
+          grep -F "prompt-toolkit<3.0.52; python_version <" /tmp/req.txt
+          grep -F "questionary>=2.1.1; python_version >=" /tmp/req.txt
+          # 真实画一次选择框：Ubuntu 20.04（Python 3.8）上依赖版本不兼容时菜单会一打开就崩（fix-menu-py38）
+          # 回车后再送 Ctrl-C，回车没被接收时返回 None 让断言失败，不会一直等输入
+          /opt/v/bin/python -I -c 'import questionary
+          from prompt_toolkit.input import create_pipe_input
+          from prompt_toolkit.output import DummyOutput
+          with create_pipe_input() as i:
+              i.send_text("\r\x03")
+              assert questionary.select("t", choices=["a", "b"], input=i, output=DummyOutput()).ask() == "a"'
 
   publish-pypi:
     needs: smoke

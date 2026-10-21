@@ -41,7 +41,7 @@ Ubuntu 服务器 / 编译机没有桌面版 Clash 客户端。编译机现状（
 ## 3. 假设与约束
 
 - 运行环境：systemd 管理的 Linux，x86_64 或 arm64；Python ≥ 3.8（Ubuntu 20.04 自带 3.8）。
-- 依赖库按 Python 3.8 可装的最后版本约束上限由 pip 自动选取（2026-10-20 查 PyPI：click 3.8 末版 8.1.8、rich 14.3.4、questionary 2.1.0、prompt_toolkit 3.0.52、httpx 0.28.1、PyYAML 6.0.3）。`pyproject.toml` 只写下限，pip 依据各版本 `requires_python` 自动挑可用版本。
+- 依赖库按 Python 3.8 可装的最后版本约束上限由 pip 自动选取（2026-10-20 查 PyPI：click 3.8 末版 8.1.8、rich 14.3.4、questionary 2.1.0、prompt_toolkit 3.0.52、httpx 0.28.1、PyYAML 6.0.3）。`pyproject.toml` 只写下限，pip 依据各版本 `requires_python` 自动挑可用版本。（2026-10-21 注记：例外是 3.8 上 prompt_toolkit 已限制在 3.0.52 以下，实际解析为 3.0.51，见 `docs/bugfix/fix-menu-py38.md`。）
 - 内核版本：最低支持 mihomo v1.19.0，首版开发与测试基线 v1.19.21。
 - 许可证：本项目 MIT；mihomo 为 GPL-3.0，**不随包分发**，由 `install` 子命令从官方发布页（可换镜像）下载。
 - 一台机器只有一个 mihomo-cli 实例，systemd 单元名固定 `mihomo-cli.service`。
