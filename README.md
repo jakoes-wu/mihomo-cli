@@ -17,6 +17,13 @@ Supported: Linux (tested on Ubuntu 20.04 / 22.04 / 24.04), Python 3.8+. macOS an
 
 ## Install
 
+If `pipx` is not installed yet, install it first, then open a new terminal so `~/.local/bin` is on `PATH`:
+
+```bash
+sudo apt update && sudo apt install -y pipx python3-venv
+pipx ensurepath
+```
+
 ```bash
 pipx install mihomo-cli
 mihomo-cli install            # downloads the mihomo core and geo data, installs the service (asks for sudo once)

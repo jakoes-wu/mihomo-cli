@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.1 - 2026-10-21
+
+- Fix `node test <name>` reporting "no such node" and `doctor` D09 failing: single-node latency now uses the
+  provider healthcheck endpoint, since all nodes live in providers.
+- `install` / `uninstall` ask for the sudo password up front, so typing it slowly no longer hits the
+  15-second timeout of the first service command.
+- README: how to install `pipx` on Ubuntu first.
+
 ## 0.1.0 - 2026-10-21
 
 - First release: Linux (Ubuntu 20.04 / 22.04 / 24.04) command-line client built on the mihomo core.

@@ -198,7 +198,7 @@ rules:
 | 切模式 | `mode global/rule/direct` | `PATCH /configs {"mode":...}`（`hub/route/configs.go:31`、`:356-357`，只改运行时），随后写 `state.mode` 并原子重写 `config.yaml`（不重载），保证重启后仍是新模式 | 否 |
 | 国内开关 | `cn direct/proxy` | `PUT /proxies/CN`，写 `state.cn_route` | 否 |
 | 更新订阅 | `profile update [名]` | `PUT /providers/proxies/main`（`hub/route/provider.go:23`） | 否 |
-| 测延迟 | `node test [名]` | `GET /proxies/<名>/delay`、`GET /group/PROXY/delay`（`hub/route/groups.go:26`），必带查询参数 `url`（默认 `https://www.gstatic.com/generate_204`）与 `timeout`（毫秒，默认 5000；`hub/route/proxies.go:108-109`、`hub/route/groups.go:68-69`） | 否 |
+| 测延迟 | `node test [名]` | `GET /providers/proxies/<main\|manual>/<名>/healthcheck`（`hub/route/provider.go:30-36`；节点在 provider 里，`/proxies/<名>` 查不到）、`GET /group/PROXY/delay`（`hub/route/groups.go:26`），必带查询参数 `url`（默认 `https://www.gstatic.com/generate_204`）与 `timeout`（毫秒，默认 5000；`hub/route/proxies.go:108-109`、`hub/route/groups.go:68-69`） | 否 |
 | 增删节点、隐藏 / 恢复 | `node add/rm/restore` | 改 `nodes/*.txt` 或 `hidden` → 重新生成配置 → 重载 | 是 |
 | 切代理服务 | `profile use <名>` | 重新生成配置 → 重载 | 是 |
 | 加代理服务 | `profile add` | 只写 `state.yaml`（本地文件类同时复制文件到 `providers/`）；首个代理服务自动 `use`。自动 `use` 回滚时代理服务保留、`active_profile` 仍为空，提示“代理服务已添加但启用失败：<底层原因>，可修正后执行 profile use <名>”，退出码 4；`status` 显示“未启用代理服务” | 否（自动 use 时是） |

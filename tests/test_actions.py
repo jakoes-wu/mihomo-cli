@@ -418,3 +418,42 @@ def test_reapply_stops_when_kernel_exited(env, monkeypatch):
     # $MAINPID 指向仍在运行的进程（本测试进程）
     monkeypatch.setenv("MAINPID", str(os.getpid()))
     assert actions._main_pid_gone(ctx) is False
+
+
+def _install_ready(monkeypatch):
+    # 内核文件已由 env 放好；地区数据库按“已存在”处理，install 不去下载
+    monkeypatch.setattr(actions.core_dl, "geodata_path", lambda home, name: "/dev/null")
+
+
+def test_install_sudo_fail_before_service(env, monkeypatch):
+    """F-05：sudo 预检失败时直接退出码 5，不碰服务。"""
+    ctx, _kernel, platform = env
+    _install_ready(monkeypatch)
+    platform.sudo_ok = False
+    with pytest.raises(CliError) as ei:
+        actions.install(ctx, None, None, None)
+    assert ei.value.code == actions.EXIT_SUDO
+    assert "sudo_validate" in platform.actions
+    assert "install" not in platform.actions
+
+
+def test_install_sudo_validated_first(env, monkeypatch):
+    """F-05b：先预检 sudo（读密码不受 15 秒超时限制），再装服务。"""
+    ctx, _kernel, platform = env
+    _install_ready(monkeypatch)
+    actions.install(ctx, None, None, None)
+    assert platform.actions.index("sudo_validate") < platform.actions.index("install")
+
+
+def test_uninstall_sudo_precheck(env):
+    """F-05c：uninstall 同样先预检 sudo。"""
+    ctx, _kernel, platform = env
+    platform.sudo_ok = False
+    with pytest.raises(CliError) as ei:
+        actions.uninstall(ctx, False)
+    assert ei.value.code == actions.EXIT_SUDO
+    assert "uninstall" not in platform.actions
+    platform.sudo_ok = True
+    platform.actions.clear()
+    actions.uninstall(ctx, False)
+    assert platform.actions == ["sudo_validate", "uninstall"]
