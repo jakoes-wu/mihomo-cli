@@ -129,3 +129,56 @@ def test_listening_conflicts_own_listener(monkeypatch):
     nginx = "port 7897 in use by nginx (pid 77)"
     assert plat.listening_conflicts(7897) == [hidden, nginx, hidden]
     assert plat.listening_conflicts(7897, own_listener=True) == [nginx, hidden]
+
+
+def test_dns_relink_requires_marker_iface(tmp_path, monkeypatch):
+    """M-11：标记记的不是这块网卡（或已被回滚删掉）→ 抛 PlatformError，不执行 resolvectl。"""
+    import pytest
+
+    monkeypatch.setattr(linux, "DNS_MARKER", str(tmp_path / "dns.state"))
+    calls = []
+    monkeypatch.setattr(linux, "_run", lambda args, **_kw: calls.append(args))
+    plat = linux.LinuxPlatform()
+    with pytest.raises(linux.PlatformError):
+        plat.dns_relink("eth0")
+    (tmp_path / "dns.state").write_text("iface=wlan1\n")
+    with pytest.raises(linux.PlatformError):
+        plat.dns_relink("eth0")
+    assert calls == []
+    (tmp_path / "dns.state").write_text("iface=eth0\n")
+    plat.dns_relink("eth0")
+    assert calls == [["resolvectl", "dns", "eth0", "127.0.0.1"], ["resolvectl", "domain", "eth0", "~."]]
+
+
+def test_run_self_as_root_timeout(monkeypatch):
+    """M-12：sudo 子进程超时为 90 秒。"""
+    seen = {}
+
+    def fake_call(args, timeout=None):
+        seen["timeout"] = timeout
+        return 0
+
+    monkeypatch.setattr(linux.subprocess, "call", fake_call)
+    assert linux.LinuxPlatform().run_self_as_root("/h", "/py", "_tun-dns-apply", []) == 0
+    assert seen["timeout"] == 90
+
+
+def test_root_journal_and_iface_timeout_args(monkeypatch):
+    """真实类的命令行：root 日志按 _UID=0 过滤；default_iface 把 timeout 透传给 _run。"""
+    seen = []
+
+    class _Proc:
+        stdout = "[]"
+
+    def fake_run(args, timeout=None, check=True, **_kw):
+        seen.append((args, timeout))
+        return _Proc()
+
+    monkeypatch.setattr(linux, "_run", fake_run)
+    plat = linux.LinuxPlatform()
+    plat.service_root_journal()
+    assert seen[-1][0] == ["journalctl", "-u", linux.UNIT_NAME, "-b", "_UID=0", "-n", "200", "--no-pager", "-o", "cat"]
+    assert plat.default_iface(timeout=3) is None
+    assert seen[-1] == (["ip", "-j", "route", "show", "default"], 3)
+    plat.default_iface()
+    assert seen[-1][1] == linux.CMD_TIMEOUT_SEC

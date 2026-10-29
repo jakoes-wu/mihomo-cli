@@ -18,13 +18,15 @@ from . import actions, core_dl, render as render_mod
 from .actions import CliError, Ctx
 from .api import ApiError, ApiUnavailable
 from .i18n import t
-from .platform import Check, NotSupported, PlatformError, ServiceStatus
+from .platform import Check, NotSupported, Platform, PlatformError, ServiceStatus
 from .state import StateError, load_state
 
 log = logging.getLogger("mihomo_cli")
 
 GEODATA_MAX_AGE_SEC = 30 * 86400
 PREFLIGHT_TIMEOUT_MARK = "[tun] preflight lock timeout"
+# 须与 actions.tun_dns_apply 各行输出的前缀一致；那边改了这里不改，D13 会静默认不出开机失败行。
+DNS_APPLY_PREFIX = "[tun] dns-apply"
 
 
 def _c(code: str, status: str, detail: str = "", hint: str = "", fixable: bool = False, **extra: object) -> Check:
@@ -310,7 +312,8 @@ class Doctor:
         if not _tcp53():
             problems.append(t("doc.d13_no_53"))
         if not dns.get("dropin"):
-            problems.append(t("doc.d13_no_dropin"))
+            problems.append(t("doc.d13_no_route") if _dns_apply_no_route(self.platform)
+                            else t("doc.d13_no_dropin"))
         if "127.0.0.1" not in (dns.get("iface_dns") or []):
             problems.append(t("doc.d13_iface_dns", iface=dns.get("default_iface") or "?",
                               dns=" ".join(dns.get("iface_dns") or []) or "-"))
@@ -322,10 +325,12 @@ class Doctor:
 
     def fix_d13(self) -> None:
         if not self.platform.sudo_validate():
-            raise CliError(actions.EXIT_SUDO, t("err.sudo_failed"))
+            raise actions.sudo_error()
         # _tun-dns-apply 自己判断：TUN 生效则接管，否则还原。
         if not actions._dns_apply(self.ctx):
-            raise CliError(actions.EXIT_ERROR, t("err.dns_apply_failed"))
+            # 失败原因由 _tun-dns-apply 以 [tun] 开头直接打到终端；err.dns_apply_failed 说的是“已回滚 TUN”，
+            # doctor 并没有回滚，不能沿用。
+            raise CliError(actions.EXIT_ERROR, t("err.doctor_dns_apply_failed"))
 
     # ---- D14 终端代理环境变量 ----
     def d14(self) -> Check:
@@ -416,6 +421,16 @@ def _resolve_ok() -> bool:
         return True
     except OSError:
         return False
+
+
+def _dns_apply_no_route(platform: Platform) -> bool:
+    """本次开机里最后一次 dns-apply 是否因等不到默认路由而失败（新旧两版失败行都含 DNS_NO_ROUTE_MARK）。
+
+    只看以 root 运行的那部分服务日志：内核日志同在这个单元里，按行数取尾部会把 dns-apply 那行挤出去。
+    只在系统 DNS 未接管时调用，否则接管已恢复后仍会引用旧的失败行。读不到日志时返回 False，退回原提示。
+    """
+    lines = [ln for ln in platform.service_root_journal().splitlines() if DNS_APPLY_PREFIX in ln]
+    return bool(lines) and actions.DNS_NO_ROUTE_MARK in lines[-1]
 
 
 def _unit_user(unit: str) -> str:

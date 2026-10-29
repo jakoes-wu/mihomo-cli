@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Fix system DNS sometimes not being taken over after boot when TUN is on: the service could start before
+  WiFi had a default route, the DNS step failed once with `no default route interface` and was never retried.
+  It now waits up to 25 seconds for the default route, checks the interface DNS again 2 seconds after taking
+  over and re-applies it once if NetworkManager has reset it. If the network never comes up, the log line says
+  so and `doctor` D13 tells you to run `mihomo-cli doctor --fix` once the network is up.
+- When sudo needs a password but there is no terminal (for example a command run directly over ssh), the
+  error now says so and suggests `ssh -t` or running `sudo -v` first. A failed `doctor --fix` for D13 points to
+  the `[tun]` output above it instead of claiming TUN was turned off.
+
 ## 0.1.2 - 2026-10-21
 
 - Fix the interactive menu crashing on Python 3.8 (Ubuntu 20.04) with `AttributeError: 'VSplit' object has no
