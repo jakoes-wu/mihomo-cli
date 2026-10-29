@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.3 - 2026-10-29
 
 - Fix system DNS sometimes not being taken over after boot when TUN is on: the service could start before
   WiFi had a default route, the DNS step failed once with `no default route interface` and was never retried.
