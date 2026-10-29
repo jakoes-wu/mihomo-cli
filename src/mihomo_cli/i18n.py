@@ -104,8 +104,13 @@ MESSAGES: Dict[str, Tuple[str, str]] = {
     "err.tun_conflict": ("有其它代理程序或 TUN 网卡在运行，两个 TUN 不能同时开。",
                          "Another proxy program or TUN device is active; two TUN instances cannot run together."),
     "err.sudo_failed": ("需要 sudo 权限，但没有拿到。", "sudo privileges are required but were not obtained."),
+    "err.sudo_no_tty": ("需要输入 sudo 密码，但当前没有终端（例如用 ssh 直接执行命令）。请用 ssh -t 登录后再运行，或在终端里先执行 sudo -v。",
+                        "a sudo password is needed but there is no terminal to type it (e.g. a command run directly over ssh). "
+                        "Run it in an ssh -t session, or run sudo -v in a terminal first."),
     "err.dns_apply_failed": ("接管系统 DNS 失败，已自动关闭 TUN 并还原。",
                              "Taking over system DNS failed; TUN was turned off and DNS restored automatically."),
+    "err.doctor_dns_apply_failed": ("重新接管系统 DNS 失败，原因见上方以 [tun] 开头的输出。",
+                                    "Failed to take over system DNS again; see the [tun] lines above."),
     "err.tun_revert_failed": ("接管 DNS 失败后自动还原也没成功，系统 DNS 可能不正常，需要手动处理。",
                               "Taking over DNS failed and the automatic revert also failed; system DNS may be broken and needs manual repair."),
     "err.dns_revert_failed": ("还原系统 DNS 失败，TUN 保持开启，什么都没改。",
@@ -287,6 +292,9 @@ MESSAGES.update({
     "doc.d13_no_device": ("网卡 {dev} 不存在", "device {dev} is missing"),
     "doc.d13_no_53": ("127.0.0.1:53 连不上", "127.0.0.1:53 is not reachable"),
     "doc.d13_no_dropin": ("系统 DNS 没有被接管", "system DNS is not taken over"),
+    "doc.d13_no_route": ("服务启动时一直没等到网络，系统 DNS 没有被接管；网络连上后运行 mihomo-cli doctor --fix",
+                         "the network was not up when the service started, so system DNS was not taken over; "
+                         "run mihomo-cli doctor --fix once the network is up"),
     "doc.d13_iface_dns": ("网卡 {iface} 的 DNS 是 {dns}，不是 127.0.0.1", "DNS of {iface} is {dns}, not 127.0.0.1"),
     "doc.d13_resolve": ("域名解析失败", "name resolution failed"),
     "doc.d14_none": ("当前终端没有设代理环境变量", "No proxy variables in this shell"),

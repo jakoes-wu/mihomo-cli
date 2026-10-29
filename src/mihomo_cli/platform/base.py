@@ -128,6 +128,18 @@ class Platform(abc.ABC):
     def tun_supported(self) -> Optional[str]:
         """不支持 TUN 时返回原因，支持返回 None。"""
 
+    def default_iface(self, timeout: Optional[float] = None) -> Optional[str]:
+        """默认路由所在网卡；没有默认路由或查不到返回 None。timeout 为单次查询命令的超时秒数，None 用平台默认。"""
+        return None
+
+    def service_root_journal(self) -> str:
+        """本次开机以来服务日志中以 root 身份运行的那部分（ExecStartPost 等），doctor D13 用；取不到返回空串。"""
+        return ""
+
+    def dns_relink(self, iface: str) -> None:
+        """root 身份：只重做 dns_takeover 的网卡级设置，不动全局配置；网卡不是还原标记里那块时抛 PlatformError。"""
+        raise NotSupported("dns_relink")
+
     @abc.abstractmethod
     def dns_takeover(self) -> str:
         """root 身份：把系统 DNS 指向 127.0.0.1:53，返回被接管的网卡名。"""

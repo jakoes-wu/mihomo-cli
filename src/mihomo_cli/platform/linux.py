@@ -162,6 +162,16 @@ class LinuxPlatform(Platform):
             return ""
         return proc.stdout or ""
 
+    def service_root_journal(self) -> str:
+        # 内核日志（以安装用户运行）同在这个单元里、量大；按 _UID=0 只取 ExecStartPost 等以 root 运行的输出，
+        # 否则按行数取尾部会把 dns-apply 那一行挤出去。
+        try:
+            proc = _run(["journalctl", "-u", UNIT_NAME, "-b", "_UID=0", "-n", "200", "--no-pager", "-o", "cat"],
+                        check=False)
+        except PlatformError:
+            return ""
+        return proc.stdout or ""
+
     def main_pid(self) -> int:
         return self.service_status().main_pid
 
@@ -178,7 +188,9 @@ class LinuxPlatform(Platform):
             args.append("--preserve-env=" + ",".join(preserve_env))
         args += [python_exe, "-m", "mihomo_cli", "--home", home, subcommand]
         try:
-            return subprocess.call(args, timeout=60)
+            # dns-apply 最长要等 25 秒窗口 + 接管 + 2 秒回读 + 可能的一次重设，60 秒余量不够；超时会让 tun on
+            # 误判失败而回滚（fix-boot-dns-takeover.md §10）。
+            return subprocess.call(args, timeout=90)
         except subprocess.TimeoutExpired:
             return 1
         except FileNotFoundError:
@@ -259,9 +271,9 @@ class LinuxPlatform(Platform):
         return None
 
     # ---------- DNS 接管（root） ----------
-    def default_iface(self) -> Optional[str]:
+    def default_iface(self, timeout: Optional[float] = None) -> Optional[str]:
         try:
-            proc = _run(["ip", "-j", "route", "show", "default"], check=False)
+            proc = _run(["ip", "-j", "route", "show", "default"], timeout=CMD_TIMEOUT_SEC if timeout is None else timeout, check=False)
             routes = json.loads(proc.stdout or "[]")
         except (PlatformError, ValueError):
             return None
@@ -293,6 +305,14 @@ class LinuxPlatform(Platform):
         _run(["resolvectl", "dns", iface, "127.0.0.1"])
         _run(["resolvectl", "domain", iface, "~."])
         return iface
+
+    def dns_relink(self, iface: str) -> None:
+        # 只改还原标记里记着的网卡：tun on 超时回滚后本进程可能还活着，那时标记已被删，再改就留下
+        # dns_revert 还原不了、doctor 也查不出的网卡设置。
+        if read_marker_iface() != iface:
+            raise PlatformError("marker iface mismatch")
+        _run(["resolvectl", "dns", iface, "127.0.0.1"])
+        _run(["resolvectl", "domain", iface, "~."])
 
     def dns_revert(self) -> bool:
         marker_iface = read_marker_iface()

@@ -63,8 +63,13 @@ REAPPLY_READY_SEC = 60.0
 REAPPLY_BUDGET_SEC = 90.0
 REAPPLY_SETTLE_SEC = 2.0
 REAPPLY_TRIES = 3
-# _tun-dns-apply 等网卡与 53 端口就绪的上限（方案 5.1.7「启动耗时预算」）。
-DNS_APPLY_WAIT_SEC = 10.0
+# _tun-dns-apply 依次等 TUN 网卡、53 端口与默认路由，三者共用这一个窗口（方案 5.1.7「启动耗时预算」）。
+# 改大会挤占单元 TimeoutStartSec=180 与 run_self_as_root 90 秒超时的余量，见 fix-boot-dns-takeover.md §8.1。
+DNS_APPLY_WAIT_SEC = 25.0
+# 等不到默认路由时失败行里的固定字样；doctor D13 靠它认出“开机时没等到网络”，改字样会让 doctor 认不出。
+DNS_NO_ROUTE_MARK = "no default route interface"
+# 接管后等这么久再回读网卡 DNS，看是否被 NetworkManager 改回（取值无源码依据，见 bugfix 方案 §8.1）。
+DNS_SETTLE_SEC = 2.0
 EXIT_IP_URL = "https://ipinfo.io/json"
 EXIT_IP_TIMEOUT_SEC = 5.0
 TEST_ENV_DNS_REVERT = "MIHOMO_CLI_TEST_FAIL_DNS_REVERT"
@@ -716,7 +721,7 @@ def install(ctx: Ctx, core_version: Optional[str], mirror: Optional[str], port: 
     # 先单独让 sudo 读密码（sudo -v 不设超时）。否则密码会在 install_service 的第一条 sudo 命令里读，
     # 输密码的时间算进那条命令 15 秒的超时，输慢了就失败。
     if not ctx.platform.sudo_validate():
-        raise CliError(EXIT_SUDO, t("err.sudo_failed"))
+        raise sudo_error()
     user = getpass.getuser()
     try:
         ctx.platform.install_service(home, user, ctx.python_exe)
@@ -748,7 +753,7 @@ def uninstall(ctx: Ctx, purge: bool) -> Dict[str, Any]:
     ctx.say("info", t("info.sudo_uninstall"))
     # 同 install：unit 文件不存在时第一条 sudo 是 15 秒超时的 daemon-reload，先单独读密码。
     if not ctx.platform.sudo_validate():
-        raise CliError(EXIT_SUDO, t("err.sudo_failed"))
+        raise sudo_error()
     try:
         # 停止时 ExecStopPost 会还原 DNS 接管。
         ctx.platform.uninstall_service()
@@ -1244,6 +1249,20 @@ def _preserve_env() -> List[str]:
     return [TEST_ENV_DNS_REVERT] if os.environ.get(TEST_ENV_DNS_REVERT) else []
 
 
+def sudo_error() -> CliError:
+    """sudo_validate() 已失败后调用：没有控制终端时给出“请用 ssh -t”的提示，否则原提示。
+
+    sudo 从终端（/dev/tty）读密码而不是标准输入，所以判断终端要打开 /dev/tty，不能看 sys.stdin.isatty()；
+    ssh 不带 -t 直接执行命令时打不开它。
+    """
+    try:
+        fd = os.open("/dev/tty", os.O_RDWR)
+    except OSError:
+        return CliError(EXIT_SUDO, t("err.sudo_no_tty"))
+    os.close(fd)
+    return CliError(EXIT_SUDO, t("err.sudo_failed"))
+
+
 def _dns_apply(ctx: Ctx) -> bool:
     return ctx.platform.run_self_as_root(ctx.paths.home, ctx.python_exe, "_tun-dns-apply", _preserve_env()) == 0
 
@@ -1282,7 +1301,7 @@ def tun_on(ctx: Ctx, d13: Optional[Callable[[Ctx], bool]] = None) -> Dict[str, A
             ctx.say("warn", t("warn.run_doctor_fix"))
         return {"tun": True, "changed": False}
     if running and not ctx.platform.sudo_validate():
-        raise CliError(EXIT_SUDO, t("err.sudo_failed"))
+        raise sudo_error()
     _tun_precheck(ctx)
     with locked(ctx):
         state = read_state(ctx)
@@ -1333,7 +1352,7 @@ def tun_off(ctx: Ctx) -> Dict[str, Any]:
         log.info("[tun] off offline")
         return {"tun": False, "changed": True}
     if not ctx.platform.sudo_validate():
-        raise CliError(EXIT_SUDO, t("err.sudo_failed"))
+        raise sudo_error()
     # 先还原 DNS 再关 TUN：重载去掉 dns 段后 53 端口立即停听；先还原时 TUN 仍开，
     # 转去原上游的查询仍被 dns-hijack 接住，解析不中断（方案 5.1.8）。
     if not _dns_revert(ctx):
@@ -1651,10 +1670,67 @@ def _reapply_write_back(ctx: Ctx, state: Dict[str, Any]) -> None:
         lock.release()
 
 
+def _wait_default_iface(ctx: Ctx, deadline: float, cmd_timeout_sec: float) -> Optional[str]:
+    """在 deadline 前轮询默认路由网卡，拿到返回网卡名，窗口用完返回 None。
+
+    先查后判断时间：网卡或 53 端口在窗口末尾才就绪时也至少查一次，与 53 端口等待的 max(0.5, …) 同一用意。
+    每次查询的命令超时不超过剩余窗口，避免一次卡住的 ip 命令把窗口撑大。
+    """
+    start = time.monotonic()
+    announced = False
+    while True:
+        left = max(1.0, deadline - time.monotonic())
+        iface = ctx.platform.default_iface(timeout=min(cmd_timeout_sec, left))
+        if iface:
+            if announced:
+                print("[tun] dns-apply default route ready iface=%s waited=%.1fs"
+                      % (iface, time.monotonic() - start), flush=True)
+            return iface
+        if not announced:
+            print("[tun] dns-apply waiting for default route (%ds window)" % DNS_APPLY_WAIT_SEC, flush=True)
+            announced = True
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(0.5)
+
+
+def _verify_iface_dns(ctx: Ctx, iface: str) -> None:
+    """接管后回读网卡 DNS；被改回时重设一次。只打 WARN，不影响 dns-apply 的返回值。
+
+    第一次接管已经成功，这里的任何失败都不能交给外层 except：那会让 tun on 把成功的接管整个回滚。
+    """
+    try:
+        time.sleep(DNS_SETTLE_SEC)
+        st = ctx.platform.dns_status()
+        now_iface = st.get("default_iface")
+        iface_dns = st.get("iface_dns") or []
+        if "127.0.0.1" in iface_dns:
+            return
+        if not now_iface or not iface_dns:
+            print("[tun] dns-apply WARN iface dns unknown after takeover", flush=True)
+            return
+        if now_iface != iface:
+            # 还原标记只记了第一次接管的网卡；重设新网卡后 dns_revert 还原不了它，关 TUN 后它会一直指向
+            # 已无人监听的 127.0.0.1，整机解析中断。新网卡由全局 drop-in 兜底，D13 会报出。
+            print("[tun] dns-apply WARN iface changed %s->%s, skip re-link" % (iface, now_iface), flush=True)
+            return
+        # 不再重启 resolved：若覆盖正是重启后 NetworkManager 重新下发引起的，再重启会把同一场竞争再触发一次。
+        print("[tun] dns-apply WARN iface dns overwritten (%s), re-linking %s" % (" ".join(iface_dns), iface),
+              flush=True)
+        ctx.platform.dns_relink(iface)
+    except (PlatformError, NotSupported, OSError) as exc:
+        # doctor D13 看最后一条 dns-apply 行是否含 DNS_NO_ROUTE_MARK；这里的 WARN 不能被误认成开机没等到网络。
+        reason = str(exc).replace(DNS_NO_ROUTE_MARK, "no default route")
+        print("[tun] dns-apply WARN re-link failed: %s" % reason, flush=True)
+
+
 def tun_dns_apply(ctx: Ctx) -> int:
     """root 身份：TUN 生效时接管系统 DNS，否则还原。只读 state、不加锁、不写主目录（方案 5.1.7）。"""
-    from .platform.linux import wait_port
+    from .platform.linux import CMD_TIMEOUT_SEC, wait_port
 
+    # 本函数经 sudo 运行时标准输出不是终端，Python 会整块缓存到退出才写出，而 stderr（3.9 起）按行写出；
+    # 写标准输出的行一律 flush，否则服务日志里 waiting 行会排到 ERROR 行之后，doctor D13 按“最后一条
+    # dns-apply 行”认不出失败。
     try:
         state = load_state(ctx.paths)
     except StateError as exc:
@@ -1666,7 +1742,7 @@ def tun_dns_apply(ctx: Ctx) -> int:
         if not effective:
             # 不会留下指向一个没人监听的 127.0.0.1:53 的全局配置。
             ctx.platform.dns_revert()
-            print("[tun] dns-apply tun not effective, reverted")
+            print("[tun] dns-apply tun not effective, reverted", flush=True)
             return EXIT_OK
         deadline = time.monotonic() + DNS_APPLY_WAIT_SEC
         while time.monotonic() < deadline and not ctx.platform.tun_device_exists(render_mod.TUN_DEVICE):
@@ -1675,8 +1751,15 @@ def tun_dns_apply(ctx: Ctx) -> int:
         if not ctx.platform.tun_device_exists(render_mod.TUN_DEVICE) or not wait_port("127.0.0.1", 53, remaining):
             print("[tun] dns-apply ERROR device or 127.0.0.1:53 not ready", file=sys.stderr)
             return EXIT_ERROR
+        # 开机时 network-online.target 不保证 WiFi 已连上（fix-boot-dns-takeover.md §4）；没有默认路由就不知道
+        # 接管哪块网卡，必须在窗口内等它出现，否则单元 ExecStartPost 失败一次后不会再重试。
+        if not _wait_default_iface(ctx, deadline, CMD_TIMEOUT_SEC):
+            print("[tun] dns-apply ERROR %s within %ds window; run 'mihomo-cli doctor --fix' once the network is up"
+                  % (DNS_NO_ROUTE_MARK, DNS_APPLY_WAIT_SEC), file=sys.stderr)
+            return EXIT_ERROR
         iface = ctx.platform.dns_takeover()
-        print("[tun] dns-apply takeover iface=%s" % iface)
+        print("[tun] dns-apply takeover iface=%s" % iface, flush=True)
+        _verify_iface_dns(ctx, iface)
         return EXIT_OK
     except (PlatformError, OSError) as exc:
         print("[tun] dns-apply ERROR %s" % exc, file=sys.stderr)

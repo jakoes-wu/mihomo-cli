@@ -457,3 +457,216 @@ def test_uninstall_sudo_precheck(env):
     platform.actions.clear()
     actions.uninstall(ctx, False)
     assert platform.actions == ["sudo_validate", "uninstall"]
+
+
+# ---- 开机时 dns-apply 等默认路由（fix-boot-dns-takeover.md §11） ----
+
+class _FakeTime:
+    """假时钟：sleep 只推进时间，不真等。"""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, sec: float) -> None:
+        self.now += sec
+
+
+def _dns_apply_env(env, monkeypatch, port_ready=None):
+    """TUN 已生效、网卡与 53 端口就绪的 dns-apply 前置；返回 (ctx, platform, clock, printed)。"""
+    from mihomo_cli.platform import linux
+    from mihomo_cli.state import save_state
+
+    ctx, _kernel, platform = env
+    st = load_state(ctx.paths)
+    st["tun"] = True
+    save_state(ctx.paths, st)
+    clock = _FakeTime()
+    monkeypatch.setattr(actions, "time", clock)
+    monkeypatch.setattr(linux, "wait_port", port_ready or (lambda host, port, timeout: True))
+    printed = []
+
+    def fake_print(*args, **kwargs):
+        printed.append((" ".join(str(a) for a in args), kwargs))
+
+    monkeypatch.setattr(actions, "print", fake_print, raising=False)
+    return ctx, platform, clock, printed
+
+
+def _apply_lines(printed):
+    return [text for text, _ in printed if "[tun] dns-apply" in text]
+
+
+def test_dns_apply_waits_for_default_route(env, monkeypatch):
+    """M-01：默认路由晚到 → 打 waiting / ready，随后接管成功。"""
+    ctx, platform, _clock, printed = _dns_apply_env(env, monkeypatch)
+    platform.iface_none_times = 3
+    assert actions.tun_dns_apply(ctx) == actions.EXIT_OK
+    assert platform.takeover_calls == 1
+    text = "\n".join(_apply_lines(printed))
+    assert "waiting for default route" in text
+    assert "default route ready iface=eth0" in text
+
+
+def test_dns_apply_no_default_route(env, monkeypatch):
+    """M-02 前半：窗口内一直没有默认路由 → EXIT_ERROR、不接管、ERROR 行最后且含固定字样；stdout 行都 flush。"""
+    import sys
+
+    ctx, platform, _clock, printed = _dns_apply_env(env, monkeypatch)
+    platform.iface_none_times = 10 ** 6
+    assert actions.tun_dns_apply(ctx) == actions.EXIT_ERROR
+    assert platform.takeover_calls == 0
+    lines = _apply_lines(printed)
+    assert "no default route interface within 25s window" in lines[-1]
+    assert printed[-1][1].get("file") is sys.stderr
+    for _text, kwargs in printed:
+        if kwargs.get("file") is not sys.stderr:
+            assert kwargs.get("flush") is True
+
+
+def test_dns_apply_route_checked_after_window(env, monkeypatch):
+    """M-02 后半：53 端口在窗口末尾之后才就绪，仍至少查一次默认路由。"""
+    clock_box = {}
+
+    def late_port(host, port, timeout):
+        clock_box["clock"].now += 100
+        return True
+
+    ctx, platform, clock, _printed = _dns_apply_env(env, monkeypatch, port_ready=late_port)
+    clock_box["clock"] = clock
+    assert actions.tun_dns_apply(ctx) == actions.EXIT_OK
+    assert platform.takeover_calls == 1
+
+
+def test_dns_apply_route_ready_at_once(env, monkeypatch):
+    """M-03：默认路由一开始就在 → 不打 waiting / ready。"""
+    ctx, platform, _clock, printed = _dns_apply_env(env, monkeypatch)
+    assert actions.tun_dns_apply(ctx) == actions.EXIT_OK
+    text = "\n".join(_apply_lines(printed))
+    assert "waiting" not in text and "ready" not in text
+    assert platform.takeover_calls == 1 and platform.relink_calls == []
+
+
+def test_dns_apply_relink_after_overwrite(env, monkeypatch):
+    """M-11：接管后网卡 DNS 被改回 → 重设一次；重设失败只 WARN、不带失败字样。"""
+    from mihomo_cli.platform import PlatformError
+
+    ctx, platform, clock, printed = _dns_apply_env(env, monkeypatch)
+    platform.dns_state["iface_dns"] = ["192.168.0.1"]
+    seen_at = []
+    orig_status = platform.dns_status
+
+    def status_after_settle():
+        seen_at.append(clock.now)
+        return orig_status()
+
+    monkeypatch.setattr(platform, "dns_status", status_after_settle)
+    start = clock.now
+    assert actions.tun_dns_apply(ctx) == actions.EXIT_OK
+    # 回读必须在接管后等满 DNS_SETTLE_SEC 才做，否则抓不到 NetworkManager 随后的改写
+    assert seen_at and seen_at[0] - start >= actions.DNS_SETTLE_SEC
+    assert "overwritten" in "\n".join(_apply_lines(printed))
+    assert platform.relink_calls == ["eth0"] and platform.takeover_calls == 1
+
+    printed.clear()
+    platform.relink_calls.clear()
+    platform.relink_exc = PlatformError("no default route interface")
+    assert actions.tun_dns_apply(ctx) == actions.EXIT_OK
+    lines = _apply_lines(printed)
+    assert "re-link failed" in lines[-1]
+    assert actions.DNS_NO_ROUTE_MARK not in lines[-1]
+
+
+@pytest.mark.parametrize("dns_state", [
+    {"default_iface": "eth0", "iface_dns": []},
+    {"default_iface": None, "iface_dns": []},
+])
+def test_dns_apply_readback_unknown(env, monkeypatch, dns_state):
+    """M-11：回读拿不到网卡或 DNS 列表 → WARN unknown，不重设。"""
+    ctx, platform, _clock, printed = _dns_apply_env(env, monkeypatch)
+    platform.dns_state.update(dns_state)
+    assert actions.tun_dns_apply(ctx) == actions.EXIT_OK
+    assert "iface dns unknown" in "\n".join(_apply_lines(printed))
+    assert platform.relink_calls == []
+
+
+def test_dns_apply_iface_changed_skips_relink(env, monkeypatch):
+    """M-11：回读时默认网卡已换 → WARN iface changed，不重设。"""
+    ctx, platform, _clock, printed = _dns_apply_env(env, monkeypatch)
+    platform.dns_state.update({"default_iface": "wlan1", "iface_dns": ["192.168.0.1"]})
+    assert actions.tun_dns_apply(ctx) == actions.EXIT_OK
+    assert "iface changed eth0->wlan1, skip re-link" in "\n".join(_apply_lines(printed))
+    assert platform.relink_calls == []
+
+
+def _d13_env(env, monkeypatch):
+    from mihomo_cli import doctor
+    from mihomo_cli.state import save_state
+
+    ctx, _kernel, platform = env
+    st = load_state(ctx.paths)
+    st["tun"] = True
+    save_state(ctx.paths, st)
+    monkeypatch.setattr(doctor, "_tcp53", lambda: True)
+    monkeypatch.setattr(doctor, "_resolve_ok", lambda: True)
+    calls = []
+    orig = platform.service_root_journal
+
+    def journal():
+        calls.append(1)
+        return orig()
+
+    monkeypatch.setattr(platform, "service_root_journal", journal)
+    return ctx, platform, calls
+
+
+@pytest.mark.parametrize("journal,route_hint", [
+    ("[tun] dns-apply waiting for default route (25s window)\n"
+     "[tun] dns-apply ERROR no default route interface within 25s window; run ...\n", True),
+    ("[tun] dns-apply ERROR no default route interface\n", True),
+    ("[tun] dns-apply ERROR no default route interface\n[tun] dns-apply takeover iface=eth0\n", False),
+    ("", False),
+])
+def test_d13_no_route_hint(env, monkeypatch, journal, route_hint):
+    """M-04：系统 DNS 未接管时按 root 日志最后一条 dns-apply 行决定提示。"""
+    from mihomo_cli import doctor
+    from mihomo_cli.i18n import t
+
+    ctx, platform, _calls = _d13_env(env, monkeypatch)
+    platform.root_journal = journal
+    check = doctor.Doctor(ctx).d13()
+    assert check.status == "fail"
+    assert (t("doc.d13_no_route") in check.detail) is route_hint
+    assert (t("doc.d13_no_dropin") in check.detail) is (not route_hint)
+
+
+def test_d13_dropin_present_skips_root_journal(env, monkeypatch):
+    """M-04：系统 DNS 已接管时不读 root 日志。"""
+    from mihomo_cli import doctor
+
+    ctx, platform, calls = _d13_env(env, monkeypatch)
+    platform.dns_state["dropin"] = True
+    platform.root_journal = "[tun] dns-apply ERROR no default route interface\n"
+    assert doctor.Doctor(ctx).d13().status == "ok"
+    assert calls == []
+
+
+def test_sudo_error_no_tty(monkeypatch):
+    """M-05：打不开 /dev/tty → 无终端提示；打得开 → 原提示且关闭 fd；退出码都是 5。"""
+    from mihomo_cli.i18n import t
+
+    def no_tty(path, flags):
+        raise OSError("no tty")
+
+    monkeypatch.setattr(actions.os, "open", no_tty)
+    err = actions.sudo_error()
+    assert err.code == actions.EXIT_SUDO and err.message == t("err.sudo_no_tty")
+
+    closed = []
+    monkeypatch.setattr(actions.os, "open", lambda path, flags: 99)
+    monkeypatch.setattr(actions.os, "close", lambda fd: closed.append(fd))
+    err = actions.sudo_error()
+    assert err.code == actions.EXIT_SUDO and err.message == t("err.sudo_failed")
+    assert closed == [99]

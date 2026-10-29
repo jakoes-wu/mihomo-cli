@@ -182,6 +182,14 @@ class FakePlatform(Platform):
         self.root_calls: List[str] = []
         self.root_rc: Dict[str, int] = {}
         self.actions: List[str] = []
+        # dns-apply 相关：default_iface 先返回 None 的次数、回读结果、root 日志、dns_relink 的调用与异常
+        self.iface_none_times = 0
+        self.iface_calls = 0
+        self.takeover_calls = 0
+        self.dns_state = {"dropin": False, "marker_iface": None, "default_iface": "eth0", "iface_dns": ["127.0.0.1"]}
+        self.root_journal = ""
+        self.relink_calls: List[str] = []
+        self.relink_exc: Optional[Exception] = None
 
     def core_asset_name(self, version: str) -> str:
         return "mihomo-linux-amd64-compatible-%s.gz" % version
@@ -228,14 +236,29 @@ class FakePlatform(Platform):
     def tun_supported(self) -> Optional[str]:
         return None
 
+    def default_iface(self, timeout: Optional[float] = None) -> Optional[str]:
+        self.iface_calls += 1
+        if self.iface_calls <= self.iface_none_times:
+            return None
+        return "eth0"
+
+    def service_root_journal(self) -> str:
+        return self.root_journal
+
+    def dns_relink(self, iface: str) -> None:
+        self.relink_calls.append(iface)
+        if self.relink_exc is not None:
+            raise self.relink_exc
+
     def dns_takeover(self) -> str:
+        self.takeover_calls += 1
         return "eth0"
 
     def dns_revert(self) -> bool:
         return True
 
     def dns_status(self) -> dict:
-        return {"dropin": False, "marker_iface": None, "default_iface": "eth0", "iface_dns": []}
+        return dict(self.dns_state)
 
 
 @pytest.fixture
