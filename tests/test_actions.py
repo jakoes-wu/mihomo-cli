@@ -553,9 +553,20 @@ def test_dns_apply_relink_after_overwrite(env, monkeypatch):
     """M-11：接管后网卡 DNS 被改回 → 重设一次；重设失败只 WARN、不带失败字样。"""
     from mihomo_cli.platform import PlatformError
 
-    ctx, platform, _clock, printed = _dns_apply_env(env, monkeypatch)
+    ctx, platform, clock, printed = _dns_apply_env(env, monkeypatch)
     platform.dns_state["iface_dns"] = ["192.168.0.1"]
+    seen_at = []
+    orig_status = platform.dns_status
+
+    def status_after_settle():
+        seen_at.append(clock.now)
+        return orig_status()
+
+    monkeypatch.setattr(platform, "dns_status", status_after_settle)
+    start = clock.now
     assert actions.tun_dns_apply(ctx) == actions.EXIT_OK
+    # 回读必须在接管后等满 DNS_SETTLE_SEC 才做，否则抓不到 NetworkManager 随后的改写
+    assert seen_at and seen_at[0] - start >= actions.DNS_SETTLE_SEC
     assert "overwritten" in "\n".join(_apply_lines(printed))
     assert platform.relink_calls == ["eth0"] and platform.takeover_calls == 1
 

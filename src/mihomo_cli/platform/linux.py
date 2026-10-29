@@ -273,7 +273,7 @@ class LinuxPlatform(Platform):
     # ---------- DNS 接管（root） ----------
     def default_iface(self, timeout: Optional[float] = None) -> Optional[str]:
         try:
-            proc = _run(["ip", "-j", "route", "show", "default"], timeout=timeout or CMD_TIMEOUT_SEC, check=False)
+            proc = _run(["ip", "-j", "route", "show", "default"], timeout=CMD_TIMEOUT_SEC if timeout is None else timeout, check=False)
             routes = json.loads(proc.stdout or "[]")
         except (PlatformError, ValueError):
             return None
