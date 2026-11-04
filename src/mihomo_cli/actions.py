@@ -24,6 +24,7 @@ from contextlib import contextmanager
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 import httpx
+import yaml
 
 from . import core_dl, nodes as nodes_mod, render as render_mod
 from .api import Api, ApiError, ApiUnavailable
@@ -217,12 +218,39 @@ def _tcp_ok(port: int, timeout: float = 2.0) -> bool:
         return False
 
 
-def kernel_listens_on(ctx: Ctx, port: int) -> bool:
-    """本实例内核是否自称在听 port（管理接口 /configs 的 mixed-port）。
+def _owns_fixed_port(ctx: Ctx, port: int, state: Optional[Dict[str, Any]], running: Optional[bool]) -> bool:
+    """固定节点端口是否应由本实例内核在听（feature-fixed-node-ports §5.1.4）。
+
+    管理接口不报告 listeners（K8），只能用旁证：state 配置了该端口 + 内核在运行 +
+    config.yaml 与按 state 生成的内容一致（一致才说明内核加载的就是这份端口配置）。
+    running 由调用方传入已取得的结果，避免每个端口都查一次 systemd、也避免服务状态切换时抛退出码 3。
+    """
+    if state is None or port not in [p["port"] for p in state.get("ports") or []]:
+        return False
+    if running is None:
+        try:
+            running = kernel_running(ctx)
+        except CliError:
+            return False
+    if not running:
+        return False
+    try:
+        with open(ctx.paths.config, encoding="utf-8") as fh:
+            current = fh.read()
+    except OSError:
+        return False
+    return current == render_mod.render_text(state, ctx.paths)
+
+
+def kernel_listens_on(ctx: Ctx, port: int, state: Optional[Dict[str, Any]] = None,
+                      running: Optional[bool] = None) -> bool:
+    """本实例内核是否自称在听 port（管理接口 /configs 的 mixed-port；传入 state 时还认固定节点端口）。
 
     端口检查要靠它排除自己：内核带 AmbientCapabilities 运行，同一用户也读不到它的 fd，
     平台层只能看到“有人在听、属主不可见”。接口不通（服务没跑）时返回 False，按占用处理。
     """
+    if _owns_fixed_port(ctx, port, state, running):
+        return True
     try:
         api = ctx.api()
     except (ApiError, ApiUnavailable, OSError):
@@ -235,12 +263,24 @@ def kernel_listens_on(ctx: Ctx, port: int) -> bool:
         api.close()
 
 
-def port_conflicts(ctx: Ctx, port: int) -> List[str]:
-    """混合端口占用检查（install 与 doctor D06 共用），本实例内核自己在听不算占用。"""
+def port_conflicts(ctx: Ctx, port: int, state: Optional[Dict[str, Any]] = None,
+                   running: Optional[bool] = None) -> List[str]:
+    """端口占用检查（install、doctor D06 / D16、固定节点端口共用），本实例内核自己在听不算占用。
+
+    不传 state 时只认混合端口，与旧行为相同。
+    """
     conflicts = ctx.platform.listening_conflicts(port)
-    if conflicts and kernel_listens_on(ctx, port):
+    if conflicts and kernel_listens_on(ctx, port, state, running):
         conflicts = ctx.platform.listening_conflicts(port, own_listener=True)
     return conflicts
+
+
+def port_listening(ctx: Ctx, port: int, state: Dict[str, Any], running: bool) -> bool:
+    """固定节点端口是否由本实例内核在听：没有别人占用 且 TCP 连得上（feature-fixed-node-ports §5.1.4）。
+
+    只看 TCP 连得上不够：端口被别的程序占着时连到的是占用者；内核绑定失败只记日志（K6）。
+    """
+    return not port_conflicts(ctx, port, state, running) and _tcp_ok(port)
 
 
 def validate_config(ctx: Ctx, config_path: str) -> None:
@@ -426,12 +466,14 @@ def reload(ctx: Ctx, old_state: Dict[str, Any], new_state: Dict[str, Any], actio
            files: Optional[Dict[str, Optional[bytes]]] = None,
            involved: Tuple[str, ...] = (),
            hidden_added: Tuple[str, ...] = (), restored: Tuple[str, ...] = (),
-           cleanup_after: Tuple[str, ...] = ()) -> str:
+           cleanup_after: Tuple[str, ...] = (), ports_involved: Tuple[int, ...] = ()) -> str:
     """重载事务：校验 → 备份 → 替换文件 → PUT /configs → 后置核验 → 提交 / 回滚（方案 5.1.5 第 1–6 步）。
 
     调用方必须已持 state.lock。state.yaml 只在核验通过后替换，任何失败时保持旧值。
     files：正式路径 → 新内容（None 表示删除）；involved：本次涉及、要精确核验的 provider（main / manual）。
-    cleanup_after：提交成功后删除的文件（如改名后的旧名文件）。返回备份名。
+    cleanup_after：提交成功后删除的文件（如改名后的旧名文件）。
+    ports_involved：本次新增或链接有变的固定节点端口；只有它们核验失败才回滚，其它端口只告警
+    （feature-fixed-node-ports §5.1.3）。返回备份名。
     """
     files = dict(files or {})
     started = time.monotonic()
@@ -475,8 +517,8 @@ def reload(ctx: Ctx, old_state: Dict[str, Any], new_state: Dict[str, Any], actio
             os.replace(staged_config, ctx.paths.config)
             api.reload(ctx.paths.config)
             # 第 5 步：后置核验。
-            readback = _verify(ctx, api, new_state, pre_counts, pre_members, involved_set,
-                               hidden_added, restored)
+            readback, port_readback = _verify(ctx, api, new_state, pre_counts, pre_members, involved_set,
+                                              hidden_added, restored, ports_involved)
         except (ApiError, ApiUnavailable, CliError, OSError) as exc:
             _rollback(ctx, api, old_state, backup, replaced, exc)
             raise AssertionError("unreachable") from exc  # _rollback 总会抛出
@@ -487,6 +529,10 @@ def reload(ctx: Ctx, old_state: Dict[str, Any], new_state: Dict[str, Any], actio
                 entry["name"] = name
             if sel_index is not None and sel_index < len(readback):
                 new_prof["selected"] = readback[sel_index]
+        # 节点数不为 1 的无关端口不在 port_readback 里，name 保留旧值，实际可用性以 D16 为准。
+        for item in new_state.get("ports") or []:
+            if item["port"] in port_readback:
+                item["name"] = port_readback[item["port"]]
         save_state(ctx.paths, new_state)
         try:
             if ensure_selection(ctx, api, new_state):
@@ -510,8 +556,9 @@ def reload(ctx: Ctx, old_state: Dict[str, Any], new_state: Dict[str, Any], actio
 
 def _verify(ctx: Ctx, api: Api, new_state: Dict[str, Any], pre_counts: Dict[str, int],
             pre_members: List[str], involved: set, hidden_added: Tuple[str, ...],
-            restored: Tuple[str, ...]) -> Optional[List[str]]:
-    """第 5 步后置核验；通过时返回 manual 的节点名（按顺序），没有手工节点返回 None。"""
+            restored: Tuple[str, ...],
+            ports_involved: Tuple[int, ...] = ()) -> Tuple[Optional[List[str]], Dict[int, str]]:
+    """第 5 步后置核验；通过时返回 (manual 的节点名（按顺序，没有手工节点为 None）, {固定端口: 节点名})。"""
     if _force_fail("MIHOMO_CLI_TEST_FAIL_VERIFY"):
         raise CliError(EXIT_ROLLED_BACK, t("err.verify_failed"), detail="MIHOMO_CLI_TEST_FAIL_VERIFY=1")
     cfg = api.get_configs()
@@ -552,8 +599,40 @@ def _verify(ctx: Ctx, api: Api, new_state: Dict[str, Any], pre_counts: Dict[str,
     for name in restored:
         if main_names is not None and name in main_names and name not in members:
             raise CliError(EXIT_ROLLED_BACK, t("err.verify_failed"), detail="not restored: %s" % name)
+    port_readback = _verify_ports(ctx, api, new_state, ports_involved)
     if render_mod.expects_no_nodes(new_state, main_names):
         ctx.say("warn", t("warn.no_nodes_blocked"))
+    return readback, port_readback
+
+
+def _verify_ports(ctx: Ctx, api: Api, new_state: Dict[str, Any],
+                  ports_involved: Tuple[int, ...]) -> Dict[int, str]:
+    """逐个核验固定节点端口：专属 provider 恰好 1 个节点、端口由本实例在听（feature-fixed-node-ports §5.1.3）。
+
+    只有本次新增 / 改动的端口失败才回滚。与本次动作无关的端口失败只告警：回滚恢复的旧配置
+    照样引用同一个空 provider，再重载仍为空，若作为回滚条件，加节点、切代理服务等无关动作会全部卡死。
+    这类端口此时由 empty-fallback 回落 REJECT 断网，不会直连。
+    """
+    readback: Dict[int, str] = {}
+    involved = set(ports_involved)
+    for item in new_state.get("ports") or []:
+        port = item["port"]
+        names = api.provider_node_names(render_mod.port_provider_name(port))
+        listening = port_listening(ctx, port, new_state, running=True)
+        if port in involved:
+            if len(names) != 1:
+                raise CliError(EXIT_ROLLED_BACK, t("err.port_unparsable", port=port),
+                               detail="port %d nodes %d; link: %s"
+                               % (port, len(names), nodes_mod.link_summary(item["link"])))
+            if not listening:
+                raise CliError(EXIT_ROLLED_BACK, t("err.verify_failed"), detail="port %d not listening" % port)
+        else:
+            if len(names) != 1:
+                ctx.say("warn", t("warn.port_blocked", port=port))
+            elif not listening:
+                ctx.say("warn", t("warn.port_not_listening", port=port))
+        if len(names) == 1:
+            readback[port] = names[0]
     return readback
 
 
@@ -658,6 +737,9 @@ def status(ctx: Ctx, with_ip: bool = True) -> Dict[str, Any]:
         "tun": state["tun"],
         "tun_suspended": state.get("tun_suspended"),
         "mixed_port": state["mixed_port"],
+        "ports": [p["port"] for p in state["ports"]],
+        # 内核未运行时为 None（不探测）。
+        "ports_listening": None,
         "exit": None,
         "running": st.running,
     }
@@ -671,6 +753,9 @@ def status(ctx: Ctx, with_ip: bool = True) -> Dict[str, Any]:
             pass
         if with_ip:
             info["exit"] = exit_ip(int(state["mixed_port"]))
+        if state["ports"]:
+            info["ports_listening"] = sum(
+                1 for p in state["ports"] if port_listening(ctx, p["port"], state, running=True))
     return info
 
 
@@ -694,7 +779,11 @@ def install(ctx: Ctx, core_version: Optional[str], mirror: Optional[str], port: 
         if mirror is not None:
             state["mirror"] = mirror_n
         if port is not None:
+            if port in [p["port"] for p in state["ports"]]:
+                raise CliError(EXIT_USAGE, t("err.port_taken", port=port))
             state["mixed_port"] = port
+        if version is not None:
+            _require_ports_core(state, version)
         conflicts = port_conflicts(ctx, int(state["mixed_port"]))
         if conflicts:
             raise CliError(EXIT_ERROR, t("err.port_in_use", port=state["mixed_port"]), detail="; ".join(conflicts),
@@ -734,6 +823,16 @@ def install(ctx: Ctx, core_version: Optional[str], mirror: Optional[str], port: 
     return result
 
 
+def _require_ports_core(state: Dict[str, Any], version: str) -> None:
+    """有固定节点端口时拒绝装 < 1.19.27 的内核：旧内核忽略 empty-fallback，端口节点为空时会直连（K5）。"""
+    if state["ports"] and core_dl.version_tuple(version) < core_dl.PORTS_MIN_CORE_VERSION:
+        raise CliError(EXIT_USAGE, t("err.port_core_old", version=version, need=_ports_min_version()))
+
+
+def _ports_min_version() -> str:
+    return "v%d.%d.%d" % core_dl.PORTS_MIN_CORE_VERSION
+
+
 def _latest(base: str) -> str:
     try:
         return core_dl.latest_version(base)
@@ -769,6 +868,9 @@ def core_upgrade(ctx: Ctx, version: Optional[str], mirror: Optional[str]) -> Dic
     version_n = normalize_version_or_usage(version)
     with locked(ctx):
         state = read_state(ctx)
+        if version_n:
+            # 已知目标版本时先过门槛，免得被拒前已改写 mirror 与 config.yaml。
+            _require_ports_core(state, version_n)
         if mirror is not None:
             state["mirror"] = mirror_normalize(mirror)
             save_state(ctx.paths, state)
@@ -776,6 +878,7 @@ def core_upgrade(ctx: Ctx, version: Optional[str], mirror: Optional[str]) -> Dic
             write_config(ctx, state)
         base = render_mod.site_base(state)
     target = version_n or _latest(base)
+    _require_ports_core(state, target)
     old, _ = core_dl.core_version(ctx.paths.core)
     ctx.say("info", t("info.downloading_core", version=target))
     warning = _install_core(ctx, base, target)
@@ -1186,6 +1289,137 @@ def node_auto(ctx: Ctx, url: str, timeout_ms: int) -> Dict[str, Any]:
 
 
 # ====================================================================
+# 固定节点端口（feature-fixed-node-ports）
+# ====================================================================
+# 每个端口绑定一条节点链接，节点单独存放、不属于任何代理服务；端口固定监听 127.0.0.1、mixed、开 UDP。
+# 链接含凭据：日志只记端口号，输出只给 link_summary。
+
+def format_ports(ports: List[int]) -> str:
+    """端口连续时写成 首-尾，否则逗号列出（status 与 D16 共用）。"""
+    ports = sorted(ports)
+    if len(ports) > 1 and ports[-1] - ports[0] == len(ports) - 1:
+        return "%d-%d" % (ports[0], ports[-1])
+    return ",".join(str(p) for p in ports)
+
+
+def _require_ports_core_installed(ctx: Ctx) -> None:
+    """添加 / 恢复固定端口前核对已装内核 ≥ 1.19.27；读不到版本同样拒绝（K5：旧内核节点为空时会直连）。"""
+    version, _ = core_dl.core_version(ctx.paths.core)
+    if version is None or core_dl.version_tuple(version) < core_dl.PORTS_MIN_CORE_VERSION:
+        raise CliError(EXIT_ERROR, t("err.port_core_old", version=version or "?", need=_ports_min_version()),
+                       hints=["mihomo-cli core upgrade"])
+
+
+def _check_port_number(port: int) -> None:
+    if not 1 <= port <= 65535:
+        raise CliError(EXIT_USAGE, t("err.bad_port", port=port))
+
+
+def port_list(ctx: Ctx, with_ip: bool = False) -> Dict[str, Any]:
+    state = read_state(ctx)
+    st = service_status(ctx)
+    running = st.running and os.path.exists(ctx.paths.sock)
+    live: Dict[int, List[str]] = {}
+    if running and state["ports"]:
+        try:
+            with ctx.api() as api:
+                for item in state["ports"]:
+                    live[item["port"]] = api.provider_node_names(render_mod.port_provider_name(item["port"]))
+        except (ApiError, ApiUnavailable):
+            running = False
+    rows = []
+    for item in state["ports"]:
+        port = item["port"]
+        row: Dict[str, Any] = {"port": port, "name": item.get("name"), "link": nodes_mod.link_summary(item["link"]),
+                               "listening": None, "blocked": None, "exit": None}
+        if running:
+            names = live.get(port, [])
+            # 内核在跑时以接口为准：节点为空说明链接解析失败或文件丢失，该端口正在断网。
+            row["name"] = names[0] if names else None
+            row["blocked"] = not names
+            row["listening"] = port_listening(ctx, port, state, running=True)
+            if with_ip and row["listening"]:
+                row["exit"] = exit_ip(port)
+        rows.append(row)
+    return {"running": running, "ports": rows}
+
+
+def port_add(ctx: Ctx, port: Optional[int] = None, link: Optional[str] = None,
+             file: Optional[str] = None, start: Optional[int] = None) -> Dict[str, Any]:
+    """加固定节点端口：单个 (port, link)，或文件里的链接从 start 起依次分配端口。
+
+    任一端口不合法 / 已占用即整体拒绝，不部分写入。
+    """
+    if file is not None:
+        if start is None:
+            raise CliError(EXIT_USAGE, t("err.port_need_start"))
+        try:
+            with open(os.path.expanduser(file), encoding="utf-8") as fh:
+                links = _validate_links(tuple(nodes_mod.split_links(fh.read())))
+        except OSError as exc:
+            raise CliError(EXIT_ERROR, t("err.read_file", path=file), detail=str(exc)) from exc
+        if not links:
+            raise CliError(EXIT_USAGE, t("err.no_links"))
+        pairs = [(start + i, lk) for i, lk in enumerate(links)]
+    else:
+        if port is None or not link:
+            raise CliError(EXIT_USAGE, t("err.port_need_link"))
+        links = _validate_links(tuple(nodes_mod.split_links(link)))
+        if not links:
+            raise CliError(EXIT_USAGE, t("err.no_links"))
+        if len(links) != 1:
+            # 一个端口只绑一个节点；多条链接会写出多节点的 provider，内核里取第一个，与“固定一个节点”不符。
+            raise CliError(EXIT_USAGE, t("err.port_one_link", count=len(links)))
+        pairs = [(port, links[0])]
+    for p, _ in pairs:
+        _check_port_number(p)
+    check_home(ctx)
+    with locked(ctx):
+        # 锁内读内核版本，缩小与并发 core upgrade 的窗口（下载本身在锁外，剩余窗口由 D16 兜底）。
+        _require_ports_core_installed(ctx)
+        state = read_state(ctx)
+        taken = {int(state["mixed_port"])} | {p["port"] for p in state["ports"]}
+        for p, _ in pairs:
+            if p in taken:
+                raise CliError(EXIT_USAGE, t("err.port_taken", port=p))
+            taken.add(p)
+        for p, _ in pairs:
+            # 新端口内核还没在听，任何监听者都是别的程序。
+            conflicts = ctx.platform.listening_conflicts(p)
+            if conflicts:
+                raise CliError(EXIT_ERROR, t("err.port_in_use", port=p), detail="; ".join(conflicts))
+        new_state = copy.deepcopy(state)
+        new_state["ports"] = sorted(new_state["ports"] + [{"port": p, "link": lk, "name": None} for p, lk in pairs],
+                                    key=lambda x: x["port"])
+        files: Dict[str, Optional[bytes]] = {
+            ctx.paths.port_file(p): nodes_mod.encode_manual_file([lk]).encode("ascii") for p, lk in pairs}
+        added = tuple(p for p, _ in pairs)
+        commit(ctx, state, new_state, "port-add", files=files, ports_involved=added)
+        # 从落盘后的 state 取名字：在线时已回读，离线时为 None。
+        saved = {p["port"]: p.get("name") for p in read_state(ctx)["ports"]}
+    log.info("[switch] port add ports=%s count=%d", ",".join(str(p) for p in added), len(added))
+    return {"added": [{"port": p, "name": saved.get(p)} for p in added]}
+
+
+def port_rm(ctx: Ctx, ports: Tuple[int, ...]) -> Dict[str, Any]:
+    if not ports:
+        raise CliError(EXIT_USAGE, t("err.port_need_link"))
+    check_home(ctx)
+    with locked(ctx):
+        state = read_state(ctx)
+        existing = {p["port"] for p in state["ports"]}
+        for p in ports:
+            if p not in existing:
+                raise CliError(EXIT_ERROR, t("err.no_such_port", port=p))
+        new_state = copy.deepcopy(state)
+        new_state["ports"] = [p for p in new_state["ports"] if p["port"] not in set(ports)]
+        files: Dict[str, Optional[bytes]] = {ctx.paths.port_file(p): None for p in ports}
+        commit(ctx, state, new_state, "port-rm", files=files)
+    log.info("[switch] port rm ports=%s", ",".join(str(p) for p in ports))
+    return {"removed": list(ports)}
+
+
+# ====================================================================
 # 模式与国内开关
 # ====================================================================
 
@@ -1474,6 +1708,31 @@ def backup_list(ctx: Ctx) -> List[Dict[str, Any]]:
     return out
 
 
+def _restore_ports_precheck(ctx: Ctx, state: Dict[str, Any], new_state: Dict[str, Any],
+                            backup_has_ports: bool) -> Tuple[int, ...]:
+    """恢复备份前核对固定端口，返回本次新增或链接有变的端口（作为重载回滚条件）。
+
+    必须在重载之前查：恢复保留当前 mixed_port，备份里的端口若与它相同，
+    save_state 的校验会在内核已套用新配置之后才报错。
+    """
+    if not backup_has_ports and state["ports"]:
+        ctx.say("warn", t("warn.backup_no_ports", count=len(state["ports"])))
+    clash = [p["port"] for p in new_state["ports"] if p["port"] == int(new_state["mixed_port"])]
+    if clash:
+        raise CliError(EXIT_USAGE, t("err.port_taken", port=",".join(str(p) for p in clash)))
+    current = {p["port"]: p["link"] for p in state["ports"]}
+    changed = tuple(p["port"] for p in new_state["ports"] if current.get(p["port"]) != p["link"])
+    if new_state["ports"]:
+        _require_ports_core_installed(ctx)
+    for port in changed:
+        if port in current:
+            continue  # 当前已由本实例监听，只是换了链接
+        conflicts = ctx.platform.listening_conflicts(port)
+        if conflicts:
+            raise CliError(EXIT_ERROR, t("err.port_in_use", port=port), detail="; ".join(conflicts))
+    return changed
+
+
 def backup_restore(ctx: Ctx, name: str) -> Dict[str, Any]:
     from .state import parse_state
 
@@ -1482,14 +1741,18 @@ def backup_restore(ctx: Ctx, name: str) -> Dict[str, Any]:
         raise CliError(EXIT_ERROR, t("err.no_such_backup", name=name))
     try:
         with open(os.path.join(path, "state.yaml"), encoding="utf-8") as fh:
-            bstate = parse_state(fh.read())
+            btext = fh.read()
+        bstate = parse_state(btext)
+        # 0.1.3 及更早的备份没有 ports 键：恢复后固定端口清空，要先提示。
+        backup_has_ports = "ports" in (yaml.safe_load(btext) or {})
     except (OSError, StateError) as exc:
         raise CliError(EXIT_ERROR, t("err.backup_invalid", name=name), detail=str(exc)) from exc
     with locked(ctx):
         state = read_state(ctx)
         new_state = copy.deepcopy(state)
-        for key in ("profiles", "active_profile", "mode", "cn_route"):
+        for key in ("profiles", "active_profile", "mode", "cn_route", "ports"):
             new_state[key] = copy.deepcopy(bstate[key])
+        ports_involved = _restore_ports_precheck(ctx, state, new_state, backup_has_ports)
         # tun / tun_suspended / mixed_port / mirror 保留当前值：它们各有冲突检查与 sudo 步骤（方案 5.1.5）。
         files: Dict[str, Optional[bytes]] = {}
         backup_nodes = os.path.join(path, "nodes")
@@ -1508,7 +1771,8 @@ def backup_restore(ctx: Ctx, name: str) -> Dict[str, Any]:
             for fname in os.listdir(backup_providers):
                 with open(os.path.join(backup_providers, fname), "rb") as fh:
                     files[os.path.join(ctx.paths.providers, fname)] = fh.read()
-        commit(ctx, state, new_state, "backup-restore", files=files, involved=("main", "manual"))
+        commit(ctx, state, new_state, "backup-restore", files=files, involved=("main", "manual"),
+               ports_involved=ports_involved)
     log.info("[reload] backup restore name=%s", name)
     return {"restored": name}
 

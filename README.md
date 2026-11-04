@@ -25,6 +25,7 @@ mihomo-cli                                              # interactive menu
 - Proxy services: an airport subscription, a local Clash/mihomo file, or hand-added node links (e.g. your own VPS)
 - Switch nodes without restarting; latency test and automatic fastest-node pick
 - Global / rule / direct modes, plus a switch for whether domestic (CN) sites go direct
+- Fixed node ports: extra local ports that each always use one chosen node, whatever node or mode is selected
 - Background systemd service, installed with a single `sudo`; no root needed day to day
 - Optional TUN mode for the whole machine, including programs that ignore proxy settings
 - Every change is validated, backed up, and rolled back automatically if it fails
@@ -102,7 +103,7 @@ Run `mihomo-cli` with no arguments to open the menu. `mihomo-cli help <command>`
 
 | Command | What it does |
 | ---- | ---- |
-| `status` | Service, core, proxy service, node, mode, CN switch, TUN, port, exit IP |
+| `status` | Service, core, proxy service, node, mode, CN switch, TUN, port, fixed node ports, exit IP |
 | `install` / `uninstall` | Install or remove the core and the systemd service |
 | `core upgrade` | Replace the core; the old one is kept if verification fails |
 | `service start/stop/restart/status/logs` | Control the background service |
@@ -110,11 +111,12 @@ Run `mihomo-cli` with no arguments to open the menu. `mihomo-cli help <command>`
 | `node list/use/add/rm/restore/test/auto` | Manage nodes of the active proxy service |
 | `mode [global/rule/direct]` | Show or set the mode |
 | `cn [direct/proxy]` | Domestic sites direct or via proxy (rule mode) |
+| `port list/add/rm` | Fixed node ports: each local port always uses one node (needs core v1.19.27+) |
 | `tun on/off/status` | Whole-machine TUN mode (on/off need sudo) |
 | `proxy-env [on/off]` | Print shell statements for proxy variables |
 | `conns` / `logs` | Active connections and core logs |
 | `backup list/restore` | Automatic backups (latest 10) |
-| `doctor [--fix]` | 15 checks with fix hints |
+| `doctor [--fix]` | 16 checks with fix hints |
 | `completion bash/zsh [--install]` | Shell completion and the `mproxy on/off` helper |
 
 Global options: `--json`, `--lang zh|en`, `--home DIR` (or `MIHOMO_CLI_HOME`), `--version`.
@@ -149,8 +151,8 @@ The service unit is `/etc/systemd/system/mihomo-cli.service`.
 
 ## FAQ
 
-**Something isn't working. Where do I start?** Run `mihomo-cli doctor`. It runs 15 checks — core, service,
-config, port, nodes, exit IP, other proxy instances, TUN and DNS takeover, and more — and prints a fix hint
+**Something isn't working. Where do I start?** Run `mihomo-cli doctor`. It runs 16 checks — core, service,
+config, port, nodes, exit IP, other proxy instances, TUN and DNS takeover, fixed node ports, and more — and prints a fix hint
 for most problems. `mihomo-cli doctor --fix` applies the fixes it can do by itself.
 
 **A program ignores the proxy.** Proxy the current shell with `eval "$(mihomo-cli proxy-env on)"`, or run
@@ -166,7 +168,16 @@ the mirror is remembered.
 
 **A change broke something.** Every change is checked and rolled back automatically if it fails. To go back
 to earlier settings, use `mihomo-cli backup list` and `mihomo-cli backup restore <name>` (the latest 10 are
-kept; proxy service, node, mode and CN switch are restored, TUN, port and mirror stay as they are).
+kept; proxy service, node, mode, CN switch and fixed node ports are restored, TUN, port and mirror stay as they are).
+
+**How do I give a program its own exit node?** Add a fixed node port:
+`mihomo-cli port add 7901 'vless://...'`, then point the program at `127.0.0.1:7901` (HTTP and SOCKS5 on the
+same port, UDP included). Traffic on that port always uses that node, whichever node or mode is selected; if
+the node can't be used, the port refuses connections instead of going direct. To import several links from a
+file, one per line: `mihomo-cli port add --file links.txt --start 7901`. `mihomo-cli port list --ip` shows
+each port's exit IP. To change a port's node, `port rm` it and add it again. Ports listen on 127.0.0.1 only and
+need core v1.19.27 or newer (`mihomo-cli core upgrade`). Adding or removing a node or port reloads the
+config, which drops connections already open on fixed node ports; switching nodes with `node use` does not.
 
 **Should domestic sites go direct?** In rule mode, `mihomo-cli cn direct` (the default) or `cn proxy`.
 `mode global` sends everything through the proxy; `mode direct` sends nothing.

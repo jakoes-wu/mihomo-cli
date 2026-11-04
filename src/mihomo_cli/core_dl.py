@@ -21,6 +21,9 @@ from .render import GITHUB
 
 VERSION_RE = re.compile(r"^v\d+\.\d+\.\d+$")
 MIN_CORE_VERSION = (1, 19, 0)
+# 固定节点端口依赖策略组的 empty-fallback（v1.19.27 起才有）：旧内核静默忽略该键，
+# 端口节点为空时会回落直连而不是断网（feature-fixed-node-ports K5）。
+PORTS_MIN_CORE_VERSION = (1, 19, 27)
 GEODATA_FILES = ("geoip.metadb", "geosite.dat")
 
 

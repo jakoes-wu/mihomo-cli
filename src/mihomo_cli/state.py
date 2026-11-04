@@ -13,7 +13,7 @@ import os
 import re
 import tempfile
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import yaml
 
@@ -61,6 +61,14 @@ class Paths:
     def nodes_file(self, profile: str) -> str:
         return os.path.join(self.nodes, profile + ".txt")
 
+    def port_file(self, port: int) -> str:
+        """固定节点端口的单链接节点文件（feature-fixed-node-ports §5.1.1）。
+
+        代理服务名必须以字母数字开头（PROFILE_NAME_RE），`_port-` 前缀保证不会与
+        nodes/<代理服务名>.txt 重名；放在 nodes/ 下才能被现有备份逻辑一并复制。
+        """
+        return os.path.join(self.nodes, "_port-%d.txt" % port)
+
 
 def resolve_home(cli_home: Optional[str]) -> str:
     """主目录优先级：--home > MIHOMO_CLI_HOME > ~/.local/share/mihomo-cli。"""
@@ -84,6 +92,9 @@ def default_state() -> Dict[str, Any]:
         "profiles": {},
         # 开机时因冲突暂停 TUN 的原因；None 表示未暂停（方案 5.1.7）。
         "tun_suspended": None,
+        # 固定节点端口，每项 {port, link, name}，按端口升序；name 规则同手工节点
+        # （feature-fixed-node-ports §5.1.1）。旧 state 没有该键时按空列表读入，版本号不升。
+        "ports": [],
     }
 
 
@@ -129,7 +140,42 @@ def _validate(state: Dict[str, Any]) -> Dict[str, Any]:
         merged["profiles"][name] = base
     if merged["active_profile"] is not None and merged["active_profile"] not in merged["profiles"]:
         raise StateError("active_profile %r not in profiles" % (merged["active_profile"],))
+    merged["ports"] = _validate_ports(merged["ports"], merged["mixed_port"])
     return merged
+
+
+def _validate_ports(ports: Any, mixed_port: Any) -> List[Dict[str, Any]]:
+    """校验并规范固定节点端口列表（feature-fixed-node-ports §5.1.1）。
+
+    端口不得与混合端口相同：两者都由内核监听，相同会让其中一个绑定失败而内核不报错。
+    链接只查是否含 `://`，协议本身交给内核解析（nodes.py 模块约束）。
+    """
+    if ports is None:
+        # 手改 state 只写了 `ports:` 时 YAML 读出 None，按“没有固定端口”处理，免得服务读 state 失败。
+        ports = []
+    if not isinstance(ports, list):
+        raise StateError("ports is not a list")
+    seen = set()
+    result = []
+    for item in ports:
+        if not isinstance(item, dict):
+            # 只报类型：条目若是裸链接，%r 会把含凭据的整条链接打到终端。
+            raise StateError("invalid port entry: %s" % type(item).__name__)
+        port = item.get("port")
+        # bool 是 int 的子类，True 不能当成端口 1。
+        if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
+            raise StateError("invalid port: %r" % (port,))
+        if port in seen:
+            raise StateError("duplicate port: %d" % port)
+        if port == mixed_port:
+            raise StateError("port %d equals mixed_port" % port)
+        link = item.get("link")
+        if not isinstance(link, str) or "://" not in link:
+            raise StateError("invalid link for port %d" % port)
+        seen.add(port)
+        result.append({"port": port, "link": link, "name": item.get("name")})
+    result.sort(key=lambda p: p["port"])
+    return result
 
 
 def parse_state(text: str) -> Dict[str, Any]:
