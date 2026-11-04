@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 - 2026-11-04
 
 - Fixed node ports: `mihomo-cli port add <port> <link>` opens an extra local port (127.0.0.1, HTTP and
   SOCKS5, UDP included) whose traffic always uses that one node, whatever node or mode is selected. If the
