@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Fixed node ports: `mihomo-cli port add <port> <link>` opens an extra local port (127.0.0.1, HTTP and
+  SOCKS5, UDP included) whose traffic always uses that one node, whatever node or mode is selected. If the
+  node can't be used the port refuses connections rather than going direct. `port add --file <file> --start
+  <port>` imports one link per line onto consecutive ports, `port list [--ip]` shows each port's node,
+  listening state and exit IP, and `port rm` removes ports. Also in the menu. Needs core v1.19.27 or newer;
+  `install` and `core upgrade` refuse older versions while fixed node ports are set.
+- `status` shows one line for fixed node ports; `doctor` adds check D16 (ports listening, nodes loaded,
+  core version). `backup restore` restores fixed node ports too; restoring a backup made by an older
+  version removes the current ones, with a warning.
+
 ## 0.1.3 - 2026-10-29
 
 - Fix system DNS sometimes not being taken over after boot when TUN is on: the service could start before

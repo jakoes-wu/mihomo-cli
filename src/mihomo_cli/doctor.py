@@ -1,4 +1,4 @@
-"""doctor 自检 D01–D15（方案 5.1.10）。
+"""doctor 自检 D01–D16（方案 5.1.10；D16 见 feature-fixed-node-ports §5.1.7）。
 
 每项给出“通过 / 警告 / 失败 / 跳过 + 现象 + 修复建议”；--fix 只执行标注可自动修复的项
 （D01 / D02 / D04 / D07 / D11 / D13 / D15），修完重跑该项以修复后的结果为准。
@@ -190,6 +190,36 @@ class Doctor:
             return _c("D06", "fail", t("doc.d06_not_listening", port=port), "mihomo-cli service restart")
         return _c("D06", "ok", "127.0.0.1:%d" % port)
 
+    # ---- D16 固定节点端口（feature-fixed-node-ports §5.1.7）----
+    def d16(self) -> Check:
+        if self.state is None:
+            return _c("D16", "skip", t("err.state_invalid"))
+        ports = [p["port"] for p in self.state["ports"]]
+        if not ports:
+            return _c("D16", "skip", t("doc.d16_none"))
+        version, _ = core_dl.core_version(self.paths.core)
+        if version is None or core_dl.version_tuple(version) < core_dl.PORTS_MIN_CORE_VERSION:
+            # 旧内核忽略 empty-fallback：端口节点为空时回落直连，这是固定端口唯一会直连的路径。
+            return _c("D16", "fail", t("doc.d16_core_old", version=version or "?"), "mihomo-cli core upgrade")
+        running = self.st.running
+        for port in ports:
+            conflicts = actions.port_conflicts(self.ctx, port, self.state, running)
+            if conflicts:
+                # config.yaml 与 state 不一致时“自己在听”的旁证不成立，可能把内核自己的监听报成被占。
+                return _c("D16", "fail", t("err.port_in_use", port=port) + " " + "; ".join(conflicts),
+                          # 先让 D04 一致（排除误报），再在释放占用后重启服务让内核重新绑定端口。
+                          "mihomo-cli doctor --fix ; mihomo-cli service restart")
+        if not running:
+            return _c("D16", "skip", t("doc.need_running"))
+        with self.ctx.api() as api:
+            for port in ports:
+                if not actions.port_listening(self.ctx, port, self.state, running=True):
+                    return _c("D16", "fail", t("doc.d16_not_listening", port=port), "mihomo-cli service restart")
+                if not api.provider_node_names(render_mod.port_provider_name(port)):
+                    return _c("D16", "fail", t("doc.d16_blocked", port=port),
+                              "mihomo-cli port rm %d ; mihomo-cli port add %d <link>" % (port, port))
+        return _c("D16", "ok", "%d ports: %s" % (len(ports), actions.format_ports(ports)))
+
     # ---- D07 地区数据库 ----
     def d07(self) -> Check:
         now = time.time()
@@ -360,7 +390,7 @@ class Doctor:
         os.chmod(self.paths.home, 0o700)
 
 
-CHECK_ORDER = ["D15", "D01", "D02", "D03", "D04", "D05", "D06", "D07", "D08", "D09", "D10", "D11", "D12",
+CHECK_ORDER = ["D15", "D01", "D02", "D03", "D04", "D05", "D06", "D16", "D07", "D08", "D09", "D10", "D11", "D12",
                "D13", "D14"]
 
 

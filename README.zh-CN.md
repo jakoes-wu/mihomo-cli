@@ -25,6 +25,7 @@ mihomo-cli                                          # 打开交互菜单
 - 代理服务：机场订阅、本地 Clash / mihomo 配置文件，或手工添加的节点链接（比如自建 VPS）
 - 切换节点不重启、不断网；测延迟，一键选最快节点
 - 全局 / 规则 / 直连三种模式，另有“国内网站走不走代理”开关
+- 固定节点端口：另开几个本机端口，每个端口始终走指定的一个节点，不受当前节点和模式影响
 - 后台 systemd 服务，安装时输一次 sudo 密码，日常不需要 root
 - 可选 TUN 模式：整台机器（包括不认代理设置的程序）都走代理
 - 每次改配置都先校验、先备份，失败自动恢复原状
@@ -97,7 +98,7 @@ eval "$(mihomo-cli proxy-env on)"   # 当前终端走代理（127.0.0.1:7897）
 
 | 命令 | 作用 |
 | ---- | ---- |
-| `status` | 后台服务、内核、代理服务、节点、模式、国内开关、TUN、端口、出口 IP |
+| `status` | 后台服务、内核、代理服务、节点、模式、国内开关、TUN、端口、固定节点端口、出口 IP |
 | `install` / `uninstall` | 安装或删除内核与后台服务 |
 | `core upgrade` | 更换内核；校验不通过时原内核不变 |
 | `service start/stop/restart/status/logs` | 控制后台服务 |
@@ -105,11 +106,12 @@ eval "$(mihomo-cli proxy-env on)"   # 当前终端走代理（127.0.0.1:7897）
 | `node list/use/add/rm/restore/test/auto` | 管理当前代理服务的节点 |
 | `mode [global/rule/direct]` | 查看或切换模式 |
 | `cn [direct/proxy]` | 规则模式下国内网站直连或走代理 |
+| `port list/add/rm` | 固定节点端口：每个本机端口始终走一个节点（需要内核 v1.19.27 及以上） |
 | `tun on/off/status` | 整机 TUN 模式（开 / 关需要 sudo） |
 | `proxy-env [on/off]` | 输出终端代理环境变量语句 |
 | `conns` / `logs` | 当前连接与内核日志 |
 | `backup list/restore` | 自动备份（保留最近 10 份） |
-| `doctor [--fix]` | 15 项自检与修复建议 |
+| `doctor [--fix]` | 16 项自检与修复建议 |
 | `completion bash/zsh [--install]` | shell 补全与 `mproxy on/off` 函数 |
 
 全局选项：`--json`、`--lang zh|en`、`--home 目录`（或环境变量 `MIHOMO_CLI_HOME`）、`--version`。
@@ -143,8 +145,8 @@ eval "$(mihomo-cli proxy-env on)"   # 当前终端走代理（127.0.0.1:7897）
 
 ## 常见问题
 
-**出问题了，从哪里查起？** 运行 `mihomo-cli doctor`。它检查 15 项——内核、后台服务、配置、端口、节点、
-出口 IP、其它代理实例、TUN 与 DNS 接管等——多数问题会给出修复提示。`mihomo-cli doctor --fix` 会自动修好能自己修的项。
+**出问题了，从哪里查起？** 运行 `mihomo-cli doctor`。它检查 16 项——内核、后台服务、配置、端口、节点、
+出口 IP、其它代理实例、TUN 与 DNS 接管、固定节点端口等——多数问题会给出修复提示。`mihomo-cli doctor --fix` 会自动修好能自己修的项。
 
 **某个程序不走代理。** 让当前终端走代理：`eval "$(mihomo-cli proxy-env on)"`；或者先运行
 `mihomo-cli completion bash --install`（zsh 同理），新开一个终端后用 `mproxy on`。不认代理环境变量的程序，需要
@@ -156,7 +158,14 @@ eval "$(mihomo-cli proxy-env on)"   # 当前终端走代理（127.0.0.1:7897）
 **GitHub 访问慢或打不开。** 给 `install` 或 `core upgrade` 加 `--mirror <地址>`（见“安装”一节），镜像地址会被记住。
 
 **改完之后出问题了。** 每次改动都会先校验，失败会自动回滚。想退回更早的设置，用 `mihomo-cli backup list` 和
-`mihomo-cli backup restore <名称>`（保留最近 10 份；恢复代理服务、节点、模式和国内开关，TUN、端口和镜像地址不变）。
+`mihomo-cli backup restore <名称>`（保留最近 10 份；恢复代理服务、节点、模式、国内开关和固定节点端口，TUN、端口和镜像地址不变）。
+
+**想让某个程序固定走某个节点出去？** 加一个固定节点端口：`mihomo-cli port add 7901 'vless://...'`，再让程序用
+`127.0.0.1:7901` 做代理（同一端口支持 HTTP 和 SOCKS5，含 UDP）。这个端口的流量始终走该节点，不管当前选的是哪个
+节点、哪种模式；节点用不了时端口直接拒绝连接，不会改走直连。从文件批量导入（每行一条链接）：
+`mihomo-cli port add --file links.txt --start 7901`。`mihomo-cli port list --ip` 显示每个端口的出口 IP。换节点就先
+`port rm` 再重新添加。端口只监听 127.0.0.1，需要内核 v1.19.27 及以上（`mihomo-cli core upgrade`）。增删节点或端口
+会重新加载配置，固定节点端口上已有的连接会断开；用 `node use` 切换节点不会。
 
 **国内网站要不要直连？** 规则模式下用 `mihomo-cli cn direct`（默认）或 `cn proxy`。`mode global` 全部走代理，
 `mode direct` 全部直连。

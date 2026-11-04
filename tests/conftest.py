@@ -24,7 +24,7 @@ from mihomo_cli.state import Paths, ensure_home
 
 FAKE_CORE = """#!/bin/sh
 if [ "$1" = "-v" ]; then
-  echo "Mihomo Meta v1.19.21 linux amd64 with go1.24 with_gvisor"
+  echo "Mihomo Meta ${FAKE_CORE_VERSION:-v1.19.21} linux amd64 with go1.24 with_gvisor"
   exit 0
 fi
 if [ "$1" = "-t" ]; then
@@ -66,6 +66,9 @@ class FakeKernel:
                 providers[name] = list(self.sub_nodes.get(prov["url"], []))
             elif name == "manual":
                 providers[name] = self._manual_names(path, prov["override"]["additional-prefix"])
+            elif name.startswith("pin-"):
+                # 固定节点端口的专属 provider：与手工节点同格式、无前缀；文件缺失按 0 个节点。
+                providers[name] = self._manual_names(path, "") if os.path.exists(path) else []
             else:
                 with open(path, encoding="utf-8") as fh:
                     data = yaml.safe_load(fh) or {}
@@ -86,7 +89,8 @@ class FakeKernel:
     @staticmethod
     def _manual_names(path: str, prefix: str) -> List[str]:
         with open(path, encoding="ascii") as fh:
-            links = base64.b64decode(fh.read().strip()).decode("utf-8").splitlines()
+            raw = fh.read().strip()
+        links = base64.b64decode(raw).decode("utf-8").splitlines() if raw else []
         names = []
         for link in links:
             if link.startswith("bad://"):
@@ -264,6 +268,8 @@ class FakePlatform(Platform):
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     """返回 (ctx, kernel, platform)：主目录已建好、假内核已放入 bin/mihomo、服务处于运行状态。"""
+    # 固定节点端口要求内核 ≥ 1.19.27；默认假内核报 1.19.21，需要时用 FAKE_CORE_VERSION 改。
+    monkeypatch.delenv("FAKE_CORE_VERSION", raising=False)
     for var in ("MIHOMO_CLI_TEST_BAD_CONFIG", "MIHOMO_CLI_TEST_FAIL_VERIFY", "MIHOMO_CLI_TEST_FAIL_ROLLBACK",
                 "MIHOMO_CLI_TEST_FAIL_DNS_REVERT"):
         monkeypatch.delenv(var, raising=False)

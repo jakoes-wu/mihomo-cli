@@ -61,6 +61,15 @@ def provider_names(state: Dict[str, Any]) -> List[str]:
     return names
 
 
+def port_provider_name(port: int) -> str:
+    """固定节点端口的 provider 名，由端口号派生，不依赖节点名（feature-fixed-node-ports §5.1.2）。"""
+    return "pin-%d" % port
+
+
+def port_group_name(port: int) -> str:
+    return "PORT-%d" % port
+
+
 def expects_no_nodes(state: Dict[str, Any], main_names: Optional[List[str]] = None) -> bool:
     """按 state 判断 PROXY 组是否本来就该没有节点（只剩 REJECT）。
 
@@ -128,6 +137,13 @@ def render(state: Dict[str, Any], paths: Paths) -> Dict[str, Any]:
                 "path": "./nodes/%s.txt" % profile_name,
                 "override": {"additional-prefix": nodes_mod.MANUAL_PREFIX},
             }
+    # 固定节点端口：每个端口一个专属 provider，不放在 prof 判断里——没有当前代理服务时也要生效
+    # （feature-fixed-node-ports §5.1.2）。
+    for item in state.get("ports") or []:
+        providers[port_provider_name(item["port"])] = {
+            "type": "file",
+            "path": "./nodes/%s" % os.path.basename(paths.port_file(item["port"])),
+        }
     if providers:
         cfg["proxy-providers"] = providers
 
@@ -149,6 +165,15 @@ def render(state: Dict[str, Any], paths: Paths) -> Dict[str, Any]:
         # 显式定义 GLOBAL：内核自动生成的 GLOBAL 首个成员是 DIRECT，冷启动全局模式会整机直连（方案 5.1.4）。
         {"name": "GLOBAL", "type": "select", "proxies": ["PROXY"]},
     ]
+    for item in state.get("ports") or []:
+        # 不能写 proxies: [REJECT]：组同时有 proxies 和 use 时 REJECT 排最前、默认被选中。
+        # 用 empty-fallback 让 provider 为空（链接解析失败 / 文件缺失）时断网而不是直连（K3、K4）。
+        groups.append({
+            "name": port_group_name(item["port"]),
+            "type": "select",
+            "use": [port_provider_name(item["port"])],
+            "empty-fallback": "REJECT",
+        })
     if os.environ.get("MIHOMO_CLI_TEST_BAD_CONFIG") == "1":
         # 测试注入（R-10）：未知组类型让 mihomo -t 报 unsupported type。
         groups.append({"name": "BAD", "type": "no-such-type", "proxies": ["DIRECT"]})
@@ -160,6 +185,17 @@ def render(state: Dict[str, Any], paths: Paths) -> Dict[str, Any]:
         "GEOIP,CN,CN",
         "MATCH,PROXY",
     ]
+    if state.get("ports"):
+        # 监听端口的 proxy 在模式与规则判断之前生效（K1），所以与全局 / 规则模式、PROXY 选择无关。
+        # 只在有固定端口时写该键，保证没有固定端口的用户配置与旧版逐字相同（D04 不受升级影响）。
+        cfg["listeners"] = [{
+            "name": "port-%d" % item["port"],
+            "type": "mixed",
+            "listen": "127.0.0.1",
+            "port": int(item["port"]),
+            "udp": True,
+            "proxy": port_group_name(item["port"]),
+        } for item in state["ports"]]
 
     if tun_effective_in_config(state):
         cfg["tun"] = {

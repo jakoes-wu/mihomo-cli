@@ -65,6 +65,7 @@ def run_menu(ctx: Ctx) -> None:
             _choice(t("menu.mode"), "mode"),
             _choice(t("menu.cn"), "cn"),
             _choice(t("menu.profile"), "profile"),
+            _choice(t("menu.port"), "port"),
             _choice(t("menu.tun"), "tun"),
             _choice(t("menu.service"), "service"),
             _choice(t("menu.status"), "status"),
@@ -74,7 +75,7 @@ def run_menu(ctx: Ctx) -> None:
         if pick in (None, BACK):
             return
         {"node": _node_menu, "mode": _mode_menu, "cn": _cn_menu, "profile": _profile_menu,
-         "tun": _tun_menu, "service": _service_menu, "status": _status, "doctor": _doctor}[pick](ctx)
+         "port": _port_menu, "tun": _tun_menu, "service": _service_menu, "status": _status, "doctor": _doctor}[pick](ctx)
 
 
 def _status(ctx: Ctx) -> None:
@@ -149,6 +150,48 @@ def _node_menu(ctx: Ctx) -> None:
     elif questionary.confirm(t("menu.confirm_rm", name=name), default=False).ask():
         _do(ctx, lambda: actions.node_rm(ctx, name),
             lambda d: t("info.node_hidden" if d["hidden"] else "info.node_removed", name=d["removed"]))
+
+
+def _port_menu(ctx: Ctx) -> None:
+    """固定节点端口：列表（含出口 IP）/ 添加 / 删除，动作与 port 命令相同。"""
+    pick = questionary.select(t("menu.port"), choices=[
+        _choice(t("menu.port_list"), "list"),
+        _choice(t("menu.port_add"), "add"),
+        _choice(t("menu.port_rm"), "rm"),
+        _choice(t("menu.back"), BACK),
+    ]).ask()
+    if pick in (None, BACK):
+        return
+    if pick == "add":
+        raw = questionary.text(t("menu.port_add_port")).ask()
+        if not raw:
+            return
+        if not raw.strip().isdigit():
+            click.secho(t("err.bad_port", port=raw), fg="red")
+            return
+        link = questionary.text(t("menu.port_add_link")).ask()
+        if not link:
+            return
+        _do(ctx, lambda: actions.port_add(ctx, int(raw.strip()), link.strip()),
+            lambda d: t("info.port_added", count=len(d["added"])))
+        return
+    data = _do(ctx, lambda: actions.port_list(ctx, with_ip=(pick == "list")))
+    if not data or not data["ports"]:
+        click.echo(t("info.no_ports"))
+        return
+    if pick == "list":
+        for r in data["ports"]:
+            ex = r.get("exit")
+            click.echo("  %d  %s  %s" % (r["port"], r["name"] or t("st.pending"),
+                                          "%s %s" % (ex.get("ip") or "", ex.get("country") or "") if ex else "-"))
+        return
+    choices = [_choice("%d  %s" % (r["port"], r["name"] or r["link"]), r["port"]) for r in data["ports"]]
+    port = questionary.select(t("menu.port_rm"), choices=choices + [_choice(t("menu.back"), BACK)]).ask()
+    if port in (None, BACK):
+        return
+    if questionary.confirm(t("menu.confirm_rm", name=port), default=False).ask():
+        _do(ctx, lambda: actions.port_rm(ctx, (port,)),
+            lambda d: t("info.port_removed", ports=", ".join(str(p) for p in d["removed"])))
 
 
 def _mode_menu(ctx: Ctx) -> None:

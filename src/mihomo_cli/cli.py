@@ -384,6 +384,65 @@ def build_cli() -> click.Group:  # noqa: C901 —— 命令树集中定义，拆
         _run(app, lambda c: actions.node_auto(c, url, timeout_ms),
              lambda d: click.echo(t("info.node_auto", name=d["node"], delay=d["delay"])))
 
+    # ---------------- port（固定节点端口）----------------
+    @cli.group(help=t("help.port"), context_settings=CONTEXT, epilog=t("ex.port"))
+    def port() -> None:
+        pass
+
+    @port.command("list", help=t("help.port_list"), epilog=t("ex.port_list"))
+    @click.option("--ip", "with_ip", is_flag=True, help=t("opt.port_ip"))
+    @pass_app
+    def port_list(app: App, with_ip: bool) -> None:
+        def human(d: Any) -> None:
+            if not d["ports"]:
+                click.echo(t("info.no_ports"))
+                return
+            headers = [t("col.port"), t("col.node"), t("col.link"), t("col.listening")] + (
+                [t("st.exit")] if with_ip else [])
+            rows = []
+            for r in d["ports"]:
+                if r["listening"] is None:
+                    listening = "-"
+                elif r["blocked"]:
+                    listening = t("st.port_blocked")
+                else:
+                    listening = t("st.yes" if r["listening"] else "st.no")
+                row = [r["port"], r["name"] or t("st.pending"), r["link"], listening]
+                if with_ip:
+                    ex = r.get("exit")
+                    row.append("%s %s" % (ex.get("ip") or "", ex.get("country") or "") if ex else "-")
+                rows.append(row)
+            _table(headers, rows)
+            if not d["running"]:
+                click.echo(t("info.saved_not_running"), err=True)
+        _run(app, lambda c: actions.port_list(c, with_ip), human)
+
+    @port.command("add", help=t("help.port_add"), epilog=t("ex.port_add"))
+    @click.argument("port_no", metavar="PORT", type=int, required=False)
+    @click.argument("link", required=False)
+    @click.option("--file", "file", type=click.Path(dir_okay=False), help=t("opt.port_file"))
+    @click.option("--start", type=int, help=t("opt.port_start"))
+    @pass_app
+    def port_add(app: App, port_no: Optional[int], link: Optional[str], file: Optional[str],
+                 start: Optional[int]) -> None:
+        if file:
+            if port_no is not None or link:
+                raise click.UsageError(t("err.port_file_args"))
+            if start is None:
+                raise click.UsageError(t("err.port_need_start"))
+        elif port_no is None or not link or start is not None:
+            # --start 只配合 --file 使用；单独给出时报错，免得用户以为起始端口生效了
+            raise click.UsageError(t("err.port_need_link"))
+        _run(app, lambda c: actions.port_add(c, port_no, link, file, start),
+             lambda d: click.echo(t("info.port_added", count=len(d["added"]))))
+
+    @port.command("rm", help=t("help.port_rm"), epilog=t("ex.port_rm"))
+    @click.argument("ports", nargs=-1, type=int, required=True)
+    @pass_app
+    def port_rm(app: App, ports: tuple) -> None:
+        _run(app, lambda c: actions.port_rm(c, tuple(ports)),
+             lambda d: click.echo(t("info.port_removed", ports=", ".join(str(p) for p in d["removed"]))))
+
     # ---------------- mode / cn ----------------
     @cli.command(help=t("help.mode"), epilog=t("ex.mode"))
     @click.argument("value", required=False, type=click.Choice(["global", "rule", "direct"]))
@@ -614,7 +673,23 @@ def _print_status(d: Any) -> None:
         (t("st.exit"), "%s %s" % (exit_info.get("ip") or "", exit_info.get("country") or "") if exit_info else None),
         (t("st.home"), d["home"]),
     ]
+    ports_line = _ports_line(d)
+    if ports_line:
+        # 紧跟混合端口行；没有固定端口时不显示该行。
+        idx = [k for k, _ in pairs].index(t("st.port")) + 1
+        pairs.insert(idx, (t("st.fixed_ports"), ports_line))
     _kv(pairs)
+
+
+def _ports_line(d: Any) -> Optional[str]:
+    """status 的固定节点端口汇总行；没有固定端口返回 None（该行不显示）。"""
+    ports = d.get("ports") or []
+    if not ports:
+        return None
+    text = t("st.ports_summary", count=len(ports), ports=actions.format_ports(ports))
+    if d.get("ports_listening") is None:
+        return text + t("st.ports_not_running")
+    return text + t("st.ports_listening", n=d["ports_listening"])
 
 
 def _print_check(c: Check) -> None:

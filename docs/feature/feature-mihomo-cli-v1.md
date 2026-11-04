@@ -251,6 +251,7 @@ mihomo-cli profile list|show [名] [--reveal]|add <名> (--url U|--file F|--node
 mihomo-cli node list [--delay]|use <名>|add <链接>...|add --file F|rm <名>|restore <名>|test [名] [--url U] [--timeout 毫秒]|auto
 mihomo-cli mode [global|rule|direct]        不带参数显示当前模式
 mihomo-cli cn [direct|proxy]                国内网站直连 / 走代理
+mihomo-cli port list [--ip]|add <端口> <链接>|add --file F --start 起始端口|rm <端口>...   固定节点端口（见 docs/feature/feature-fixed-node-ports.md）
 mihomo-cli tun on|off|status                on / off 需 sudo；status 不需要
 mihomo-cli proxy-env [on|off]               输出 export / unset 语句，配合 eval 使用
 mihomo-cli conns [--watch]                  当前连接：域名、命中规则、所走节点
@@ -379,6 +380,7 @@ WantedBy=multi-user.target
 | D13 | TUN 状态（含“已暂停：与 X 冲突”）；TUN 生效时：网卡存在、`127.0.0.1:53` 可连、drop-in 存在、`resolvectl status` 中默认路由网卡 DNS 为 `127.0.0.1`、域名解析正常；TUN 未生效时 drop-in 不应存在 | 是（sudo 执行 `_tun-dns-apply`） |
 | D14 | 当前 shell 的代理环境变量是否指向本实例端口 | 否 |
 | D15 | 主目录权限为 0700（套接字本身是 0666，靠目录隔离） | 是 |
+| D16 | 固定节点端口：内核版本 ≥ 1.19.27、端口未被其它程序占用且在听、每个端口的节点已加载（见 `docs/feature/feature-fixed-node-ports.md`） | 否 |
 
 #### 5.1.11 发布流程（GitHub + PyPI）
 
